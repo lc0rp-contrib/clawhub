@@ -6,6 +6,12 @@ export const GlobalConfigSchema = type({
 })
 export type GlobalConfig = (typeof GlobalConfigSchema)[inferred]
 
+export const WellKnownConfigSchema = type({
+  registry: 'string',
+  authBase: 'string?',
+})
+export type WellKnownConfig = (typeof WellKnownConfigSchema)[inferred]
+
 export const LockfileSchema = type({
   version: '1',
   skills: {

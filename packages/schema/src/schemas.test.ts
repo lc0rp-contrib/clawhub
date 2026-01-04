@@ -2,7 +2,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { parseArk } from './ark'
-import { CliPublishRequestSchema, LockfileSchema } from './schemas'
+import { CliPublishRequestSchema, LockfileSchema, WellKnownConfigSchema } from './schemas'
 
 describe('@clawdhub/schema', () => {
   it('parses lockfile records', () => {
@@ -28,6 +28,20 @@ describe('@clawdhub/schema', () => {
     )
     expect(payload.tags).toBeUndefined()
     expect(payload.files[0]?.path).toBe('SKILL.md')
+  })
+
+  it('parses well-known config', () => {
+    expect(
+      parseArk(WellKnownConfigSchema, { registry: 'https://example.convex.site' }, 'WellKnown'),
+    ).toEqual({ registry: 'https://example.convex.site' })
+
+    expect(
+      parseArk(
+        WellKnownConfigSchema,
+        { registry: 'https://example.convex.site', authBase: 'https://clawdhub.com' },
+        'WellKnown',
+      ),
+    ).toEqual({ registry: 'https://example.convex.site', authBase: 'https://clawdhub.com' })
   })
 
   it('throws labeled errors', () => {
