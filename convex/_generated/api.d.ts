@@ -19,12 +19,14 @@ import type * as lib_changelog from "../lib/changelog.js";
 import type * as lib_embeddings from "../lib/embeddings.js";
 import type * as lib_skills from "../lib/skills.js";
 import type * as lib_tokens from "../lib/tokens.js";
+import type * as lib_webhooks from "../lib/webhooks.js";
 import type * as search from "../search.js";
 import type * as skills from "../skills.js";
 import type * as stars from "../stars.js";
 import type * as tokens from "../tokens.js";
 import type * as uploads from "../uploads.js";
 import type * as users from "../users.js";
+import type * as webhooks from "../webhooks.js";
 
 import type {
   ApiFromModules,
@@ -44,12 +46,14 @@ declare const fullApi: ApiFromModules<{
   "lib/embeddings": typeof lib_embeddings;
   "lib/skills": typeof lib_skills;
   "lib/tokens": typeof lib_tokens;
+  "lib/webhooks": typeof lib_webhooks;
   search: typeof search;
   skills: typeof skills;
   stars: typeof stars;
   tokens: typeof tokens;
   uploads: typeof uploads;
   users: typeof users;
+  webhooks: typeof webhooks;
 }>;
 
 /**

@@ -1,8 +1,8 @@
 import { ConvexError, v } from 'convex/values'
 import semver from 'semver'
-import { internal } from './_generated/api'
+import { api, internal } from './_generated/api'
 import type { Doc, Id } from './_generated/dataModel'
-import type { ActionCtx } from './_generated/server'
+import type { ActionCtx, MutationCtx } from './_generated/server'
 import { action, internalMutation, internalQuery, mutation, query } from './_generated/server'
 import { assertRole, requireUser, requireUserFromAction } from './lib/access'
 import {
@@ -18,6 +18,7 @@ import {
   parseFrontmatter,
   sanitizePath,
 } from './lib/skills'
+import type { WebhookSkillPayload } from './lib/webhooks'
 
 const MAX_TOTAL_BYTES = 50 * 1024 * 1024
 const MAX_FILES_FOR_EMBEDDING = 40
@@ -257,7 +258,7 @@ export async function publishVersionForUser(
     }),
   ])
 
-  return ctx.runMutation(internal.skills.insertVersion, {
+  const publishResult = (await ctx.runMutation(internal.skills.insertVersion, {
     userId,
     slug,
     displayName,
@@ -275,7 +276,15 @@ export async function publishVersionForUser(
       clawdis,
     },
     embedding,
+  })) as PublishResult
+
+  void schedulePublishWebhook(ctx, {
+    slug,
+    version,
+    displayName,
   })
+
+  return publishResult
 }
 
 export const getReadme: ReturnType<typeof action> = action({
@@ -394,8 +403,10 @@ export const setBatch = mutation({
     assertRole(user, ['admin', 'moderator'])
     const skill = await ctx.db.get(args.skillId)
     if (!skill) throw new Error('Skill not found')
+    const previousBatch = skill.batch ?? undefined
+    const nextBatch = args.batch?.trim() || undefined
     await ctx.db.patch(skill._id, {
-      batch: args.batch?.trim() || undefined,
+      batch: nextBatch,
       updatedAt: Date.now(),
     })
     await ctx.db.insert('auditLogs', {
@@ -406,6 +417,10 @@ export const setBatch = mutation({
       metadata: { batch: args.batch?.trim() ?? null },
       createdAt: Date.now(),
     })
+
+    if (nextBatch === 'highlighted' && previousBatch !== 'highlighted') {
+      void scheduleHighlightedWebhook(ctx, skill._id)
+    }
   },
 })
 
@@ -613,4 +628,51 @@ function visibilityFor(isLatest: boolean, isApproved: boolean) {
   if (isLatest) return 'latest'
   if (isApproved) return 'archived-approved'
   return 'archived'
+}
+
+async function schedulePublishWebhook(
+  ctx: ActionCtx,
+  params: { slug: string; version: string; displayName: string },
+) {
+  const result = (await ctx.runQuery(api.skills.getBySlug, {
+    slug: params.slug,
+  })) as { skill: Doc<'skills'>; owner: Doc<'users'> | null } | null
+  if (!result?.skill) return
+
+  const payload: WebhookSkillPayload = {
+    slug: result.skill.slug,
+    displayName: result.skill.displayName || params.displayName,
+    summary: result.skill.summary ?? undefined,
+    version: params.version,
+    ownerHandle: result.owner?.handle ?? result.owner?.name ?? undefined,
+    batch: result.skill.batch ?? undefined,
+    tags: Object.keys(result.skill.tags ?? {}),
+  }
+
+  await ctx.scheduler.runAfter(0, internal.webhooks.sendDiscordWebhook, {
+    event: 'skill.publish',
+    skill: payload,
+  })
+}
+
+async function scheduleHighlightedWebhook(ctx: MutationCtx, skillId: Id<'skills'>) {
+  const skill = await ctx.db.get(skillId)
+  if (!skill) return
+  const owner = await ctx.db.get(skill.ownerUserId)
+  const latestVersion = skill.latestVersionId ? await ctx.db.get(skill.latestVersionId) : null
+
+  const payload: WebhookSkillPayload = {
+    slug: skill.slug,
+    displayName: skill.displayName,
+    summary: skill.summary ?? undefined,
+    version: latestVersion?.version ?? undefined,
+    ownerHandle: owner?.handle ?? owner?.name ?? undefined,
+    batch: skill.batch ?? undefined,
+    tags: Object.keys(skill.tags ?? {}),
+  }
+
+  await ctx.scheduler.runAfter(0, internal.webhooks.sendDiscordWebhook, {
+    event: 'skill.highlighted',
+    skill: payload,
+  })
 }
