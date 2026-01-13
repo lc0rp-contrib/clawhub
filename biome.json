@@ -10,6 +10,7 @@
       "!**/.output",
       "!**/coverage",
       "!**/convex/_generated",
+      "!**/test-results",
       "!**/src/routeTree.gen.ts",
       "!**/.tanstack",
       "!**/public",
