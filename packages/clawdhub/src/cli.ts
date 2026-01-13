@@ -1,7 +1,9 @@
 #!/usr/bin/env node
-import { resolve } from 'node:path'
+import { stat } from 'node:fs/promises'
+import { join, resolve } from 'node:path'
 import { Command } from 'commander'
 import { getCliBuildLabel, getCliVersion } from './cli/buildInfo.js'
+import { resolveClawdbotDefaultWorkspace } from './cli/clawdbotConfig.js'
 import { cmdLoginFlow, cmdLogout, cmdWhoami } from './cli/commands/auth.js'
 import { cmdDeleteSkill, cmdUndeleteSkill } from './cli/commands/delete.js'
 import { cmdPublish } from './cli/commands/publish.js'
@@ -28,13 +30,16 @@ const program = new Command()
   .option('--no-input', 'Disable prompts')
   .showHelpAfterError()
   .showSuggestionAfterError()
-  .addHelpText('after', styleEnvBlock('\nEnv:\n  CLAWDHUB_SITE\n  CLAWDHUB_REGISTRY\n'))
+  .addHelpText(
+    'after',
+    styleEnvBlock('\nEnv:\n  CLAWDHUB_SITE\n  CLAWDHUB_REGISTRY\n  CLAWDHUB_WORKDIR\n'),
+  )
 
 configureCommanderHelp(program)
 
-function resolveGlobalOpts(): GlobalOpts {
+async function resolveGlobalOpts(): Promise<GlobalOpts> {
   const raw = program.opts<{ workdir?: string; dir?: string; site?: string; registry?: string }>()
-  const workdir = resolve(raw.workdir ?? process.cwd())
+  const workdir = await resolveWorkdir(raw.workdir)
   const dir = resolve(workdir, raw.dir ?? 'skills')
   const site = raw.site ?? process.env.CLAWDHUB_SITE ?? DEFAULT_SITE
   const registrySource = raw.registry ? 'cli' : process.env.CLAWDHUB_REGISTRY ? 'env' : 'default'
@@ -47,6 +52,35 @@ function isInputAllowed() {
   return globalFlags.input !== false
 }
 
+async function resolveWorkdir(explicit?: string) {
+  if (explicit?.trim()) return resolve(explicit.trim())
+  const envWorkdir = process.env.CLAWDHUB_WORKDIR?.trim()
+  if (envWorkdir) return resolve(envWorkdir)
+
+  const cwd = resolve(process.cwd())
+  const hasMarker = await hasClawdhubMarker(cwd)
+  if (hasMarker) return cwd
+
+  const clawdbotWorkspace = await resolveClawdbotDefaultWorkspace()
+  return clawdbotWorkspace ? resolve(clawdbotWorkspace) : cwd
+}
+
+async function hasClawdhubMarker(workdir: string) {
+  const lockfile = join(workdir, '.clawdhub', 'lock.json')
+  if (await pathExists(lockfile)) return true
+  const markerDir = join(workdir, '.clawdhub')
+  return pathExists(markerDir)
+}
+
+async function pathExists(path: string) {
+  try {
+    await stat(path)
+    return true
+  } catch {
+    return false
+  }
+}
+
 program
   .command('login')
   .description('Log in (opens browser or stores token)')
@@ -54,7 +88,7 @@ program
   .option('--label <label>', 'Token label (browser flow only)', 'CLI token')
   .option('--no-browser', 'Do not open browser (requires --token)')
   .action(async (options) => {
-    const opts = resolveGlobalOpts()
+    const opts = await resolveGlobalOpts()
     await cmdLoginFlow(opts, options, isInputAllowed())
   })
 
@@ -62,7 +96,7 @@ program
   .command('logout')
   .description('Remove stored token')
   .action(async () => {
-    const opts = resolveGlobalOpts()
+    const opts = await resolveGlobalOpts()
     await cmdLogout(opts)
   })
 
@@ -70,7 +104,7 @@ program
   .command('whoami')
   .description('Validate token')
   .action(async () => {
-    const opts = resolveGlobalOpts()
+    const opts = await resolveGlobalOpts()
     await cmdWhoami(opts)
   })
 
@@ -87,7 +121,7 @@ auth
   .option('--label <label>', 'Token label (browser flow only)', 'CLI token')
   .option('--no-browser', 'Do not open browser (requires --token)')
   .action(async (options) => {
-    const opts = resolveGlobalOpts()
+    const opts = await resolveGlobalOpts()
     await cmdLoginFlow(opts, options, isInputAllowed())
   })
 
@@ -95,7 +129,7 @@ auth
   .command('logout')
   .description('Remove stored token')
   .action(async () => {
-    const opts = resolveGlobalOpts()
+    const opts = await resolveGlobalOpts()
     await cmdLogout(opts)
   })
 
@@ -103,7 +137,7 @@ auth
   .command('whoami')
   .description('Validate token')
   .action(async () => {
-    const opts = resolveGlobalOpts()
+    const opts = await resolveGlobalOpts()
     await cmdWhoami(opts)
   })
 
@@ -113,7 +147,7 @@ program
   .argument('<query...>', 'Query string')
   .option('--limit <n>', 'Max results', (value) => Number.parseInt(value, 10))
   .action(async (queryParts, options) => {
-    const opts = resolveGlobalOpts()
+    const opts = await resolveGlobalOpts()
     const query = queryParts.join(' ').trim()
     await cmdSearch(opts, query, options.limit)
   })
@@ -125,7 +159,7 @@ program
   .option('--version <version>', 'Version to install')
   .option('--force', 'Overwrite existing folder')
   .action(async (slug, options) => {
-    const opts = resolveGlobalOpts()
+    const opts = await resolveGlobalOpts()
     await cmdInstall(opts, slug, options.version, options.force)
   })
 
@@ -137,7 +171,7 @@ program
   .option('--version <version>', 'Update to specific version (single slug only)')
   .option('--force', 'Overwrite when local files do not match any version')
   .action(async (slug, options) => {
-    const opts = resolveGlobalOpts()
+    const opts = await resolveGlobalOpts()
     await cmdUpdate(opts, slug, options, isInputAllowed())
   })
 
@@ -145,7 +179,7 @@ program
   .command('list')
   .description('List installed skills (from lockfile)')
   .action(async () => {
-    const opts = resolveGlobalOpts()
+    const opts = await resolveGlobalOpts()
     await cmdList(opts)
   })
 
@@ -160,7 +194,7 @@ program
   .option('--changelog <text>', 'Changelog text')
   .option('--tags <tags>', 'Comma-separated tags', 'latest')
   .action(async (folder, options) => {
-    const opts = resolveGlobalOpts()
+    const opts = await resolveGlobalOpts()
     await cmdPublish(opts, folder, options)
   })
 
@@ -170,7 +204,7 @@ program
   .argument('<slug>', 'Skill slug')
   .option('--yes', 'Skip confirmation')
   .action(async (slug, options) => {
-    const opts = resolveGlobalOpts()
+    const opts = await resolveGlobalOpts()
     await cmdDeleteSkill(opts, slug, options, isInputAllowed())
   })
 
@@ -180,7 +214,7 @@ program
   .argument('<slug>', 'Skill slug')
   .option('--yes', 'Skip confirmation')
   .action(async (slug, options) => {
-    const opts = resolveGlobalOpts()
+    const opts = await resolveGlobalOpts()
     await cmdUndeleteSkill(opts, slug, options, isInputAllowed())
   })
 
@@ -195,7 +229,7 @@ program
   .option('--tags <tags>', 'Comma-separated tags', 'latest')
   .option('--concurrency <n>', 'Concurrent registry checks (default: 4)', '4')
   .action(async (options) => {
-    const opts = resolveGlobalOpts()
+    const opts = await resolveGlobalOpts()
     const bump = String(options.bump ?? 'patch') as 'patch' | 'minor' | 'major'
     if (!['patch', 'minor', 'major'].includes(bump)) fail('--bump must be patch|minor|major')
     const concurrencyRaw = Number(options.concurrency ?? 4)
@@ -217,7 +251,7 @@ program
   })
 
 program.action(async () => {
-  const opts = resolveGlobalOpts()
+  const opts = await resolveGlobalOpts()
   const cfg = await readGlobalConfig()
   if (cfg?.token) {
     await cmdSync(opts, {}, isInputAllowed())

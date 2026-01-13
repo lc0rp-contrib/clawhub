@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 - 2026-01-13
 
 ### Added
 - Web: dynamic OG image cards for skills (name, description, version).
@@ -14,6 +14,7 @@
 - Registry: make SoulHub auto-seed idempotent and non-user-owned.
 - Registry: keep GitHub backup state + publish backups intact (thanks @joshp123, #1).
 - CLI/Registry: restore fork lineage on sync + clamp bulk list queries (thanks @joshp123, #1).
+- CLI: default workdir falls back to Clawdbot workspace (override with `--workdir` / `CLAWDHUB_WORKDIR`).
 
 ## 0.0.6 - 2026-01-07
 

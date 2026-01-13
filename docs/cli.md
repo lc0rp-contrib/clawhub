@@ -17,7 +17,7 @@ bun clawdhub --help
 
 ## Global flags
 
-- `--workdir <dir>`: working directory (default: cwd)
+- `--workdir <dir>`: working directory (default: cwd; falls back to Clawdbot workspace if configured)
 - `--dir <dir>`: install dir under workdir (default: `skills`)
 - `--site <url>`: base URL for browser login (default: `https://clawdhub.com`)
 - `--registry <url>`: API base URL (default: discovered, else `https://clawdhub.com`)
@@ -27,6 +27,7 @@ Env equivalents:
 
 - `CLAWDHUB_SITE`
 - `CLAWDHUB_REGISTRY`
+- `CLAWDHUB_WORKDIR`
 
 ## Config file
 
