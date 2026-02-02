@@ -27,7 +27,7 @@ vi.mock('../ui.js', () => ({
   promptConfirm: vi.fn(async () => true),
 }))
 
-const { cmdBanUser } = await import('./moderation')
+const { cmdBanUser, cmdSetRole } = await import('./moderation')
 
 function makeOpts(): GlobalOpts {
   return {
@@ -71,6 +71,46 @@ describe('cmdBanUser', () => {
         method: 'POST',
         path: '/api/v1/users/ban',
         body: { userId: 'user_123' },
+      }),
+      expect.anything(),
+    )
+  })
+})
+
+describe('cmdSetRole', () => {
+  it('requires --yes when input is disabled', async () => {
+    await expect(cmdSetRole(makeOpts(), 'demo', 'moderator', {}, false)).rejects.toThrow(/--yes/i)
+  })
+
+  it('rejects invalid roles', async () => {
+    await expect(cmdSetRole(makeOpts(), 'demo', 'owner', { yes: true }, false)).rejects.toThrow(
+      /role/i,
+    )
+  })
+
+  it('posts handle payload', async () => {
+    mockApiRequest.mockResolvedValueOnce({ ok: true, role: 'moderator' })
+    await cmdSetRole(makeOpts(), 'hightower6eu', 'moderator', { yes: true }, false)
+    expect(mockApiRequest).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        method: 'POST',
+        path: '/api/v1/users/role',
+        body: { handle: 'hightower6eu', role: 'moderator' },
+      }),
+      expect.anything(),
+    )
+  })
+
+  it('posts user id payload when --id is set', async () => {
+    mockApiRequest.mockResolvedValueOnce({ ok: true, role: 'admin' })
+    await cmdSetRole(makeOpts(), 'user_123', 'admin', { yes: true, id: true }, false)
+    expect(mockApiRequest).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        method: 'POST',
+        path: '/api/v1/users/role',
+        body: { userId: 'user_123', role: 'admin' },
       }),
       expect.anything(),
     )

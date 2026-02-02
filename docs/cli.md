@@ -132,6 +132,13 @@ Stores your API token + cached registry URL.
 - `--id` treats the argument as a user id instead of a handle.
 - `--yes` skips confirmation.
 
+### `set-role <handleOrId> <role>`
+
+- Change a user role (admin only).
+- Calls `POST /api/v1/users/role`.
+- `--id` treats the argument as a user id instead of a handle.
+- `--yes` skips confirmation.
+
 ### `sync`
 
 - Scans for local skill folders and publishes new/changed ones.

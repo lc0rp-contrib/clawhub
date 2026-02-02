@@ -531,7 +531,11 @@ async function usersPostRouterV1Handler(ctx: ActionCtx, request: Request) {
   if (!rate.ok) return rate.response
 
   const segments = getPathSegments(request, '/api/v1/users/')
-  if (segments.length !== 1 || segments[0] !== 'ban') {
+  if (segments.length !== 1) {
+    return text('Not found', 404, rate.headers)
+  }
+  const action = segments[0]
+  if (action !== 'ban' && action !== 'role') {
     return text('Not found', 404, rate.headers)
   }
 
@@ -546,6 +550,15 @@ async function usersPostRouterV1Handler(ctx: ActionCtx, request: Request) {
   const userIdRaw = typeof payload.userId === 'string' ? payload.userId.trim() : ''
   if (!handleRaw && !userIdRaw) {
     return text('Missing userId or handle', 400, rate.headers)
+  }
+
+  const roleRaw = typeof payload.role === 'string' ? payload.role.trim().toLowerCase() : ''
+  if (action === 'role' && !roleRaw) {
+    return text('Missing role', 400, rate.headers)
+  }
+  const role = roleRaw === 'user' || roleRaw === 'moderator' || roleRaw === 'admin' ? roleRaw : null
+  if (action === 'role' && !role) {
+    return text('Invalid role', 400, rate.headers)
   }
 
   let actorUserId: Id<'users'>
@@ -564,14 +577,34 @@ async function usersPostRouterV1Handler(ctx: ActionCtx, request: Request) {
     targetUserId = user._id
   }
 
+  if (action === 'ban') {
+    try {
+      const result = await ctx.runMutation(internal.users.banUserInternal, {
+        actorUserId,
+        targetUserId,
+      })
+      return json(result, 200, rate.headers)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Ban failed'
+      if (message.toLowerCase().includes('forbidden')) {
+        return text('Forbidden', 403, rate.headers)
+      }
+      if (message.toLowerCase().includes('not found')) {
+        return text(message, 404, rate.headers)
+      }
+      return text(message, 400, rate.headers)
+    }
+  }
+
   try {
-    const result = await ctx.runMutation(internal.users.banUserInternal, {
+    const result = await ctx.runMutation(internal.users.setRoleInternal, {
       actorUserId,
       targetUserId,
+      role,
     })
-    return json(result, 200, rate.headers)
+    return json({ ok: true, role: result.role ?? role }, 200, rate.headers)
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Ban failed'
+    const message = error instanceof Error ? error.message : 'Role change failed'
     if (message.toLowerCase().includes('forbidden')) {
       return text('Forbidden', 403, rate.headers)
     }

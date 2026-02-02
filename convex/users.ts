@@ -125,18 +125,44 @@ export const setRole = mutation({
   },
   handler: async (ctx, args) => {
     const { user } = await requireUser(ctx)
-    assertAdmin(user)
-    await ctx.db.patch(args.userId, { role: args.role, updatedAt: Date.now() })
-    await ctx.db.insert('auditLogs', {
-      actorUserId: user._id,
-      action: 'role.change',
-      targetType: 'user',
-      targetId: args.userId,
-      metadata: { role: args.role },
-      createdAt: Date.now(),
-    })
+    return setRoleWithActor(ctx, user, args.userId, args.role)
   },
 })
+
+export const setRoleInternal = internalMutation({
+  args: {
+    actorUserId: v.id('users'),
+    targetUserId: v.id('users'),
+    role: v.union(v.literal('admin'), v.literal('moderator'), v.literal('user')),
+  },
+  handler: async (ctx, args) => {
+    const actor = await ctx.db.get(args.actorUserId)
+    if (!actor || actor.deletedAt) throw new Error('User not found')
+    return setRoleWithActor(ctx, actor, args.targetUserId, args.role)
+  },
+})
+
+async function setRoleWithActor(
+  ctx: MutationCtx,
+  actor: Doc<'users'>,
+  targetUserId: Id<'users'>,
+  role: 'admin' | 'moderator' | 'user',
+) {
+  assertAdmin(actor)
+  const target = await ctx.db.get(targetUserId)
+  if (!target) throw new Error('User not found')
+  const now = Date.now()
+  await ctx.db.patch(targetUserId, { role, updatedAt: now })
+  await ctx.db.insert('auditLogs', {
+    actorUserId: actor._id,
+    action: 'role.change',
+    targetType: 'user',
+    targetId: targetUserId,
+    metadata: { role },
+    createdAt: now,
+  })
+  return { ok: true as const, role }
+}
 
 export const banUser = mutation({
   args: { userId: v.id('users') },

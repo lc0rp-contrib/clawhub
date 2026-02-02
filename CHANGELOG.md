@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- CLI/API: add `set-role` to change user roles (admin only).
 
 ### Changed
 

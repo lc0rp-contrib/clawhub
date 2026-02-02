@@ -12,7 +12,7 @@ import {
   cmdUnhideSkill,
 } from './cli/commands/delete.js'
 import { cmdInspect } from './cli/commands/inspect.js'
-import { cmdBanUser } from './cli/commands/moderation.js'
+import { cmdBanUser, cmdSetRole } from './cli/commands/moderation.js'
 import { cmdPublish } from './cli/commands/publish.js'
 import { cmdExplore, cmdInstall, cmdList, cmdSearch, cmdUpdate } from './cli/commands/skills.js'
 import { cmdStarSkill } from './cli/commands/star.js'
@@ -308,6 +308,18 @@ program
   .action(async (handleOrId, options) => {
     const opts = await resolveGlobalOpts()
     await cmdBanUser(opts, handleOrId, options, isInputAllowed())
+  })
+
+program
+  .command('set-role')
+  .description('Change a user role (admin only)')
+  .argument('<handleOrId>', 'User handle (default) or user id')
+  .argument('<role>', 'user | moderator | admin')
+  .option('--id', 'Treat argument as user id')
+  .option('--yes', 'Skip confirmation')
+  .action(async (handleOrId, role, options) => {
+    const opts = await resolveGlobalOpts()
+    await cmdSetRole(opts, handleOrId, role, options, isInputAllowed())
   })
 
 program

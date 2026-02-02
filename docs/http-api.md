@@ -167,6 +167,28 @@ Response:
 { "ok": true, "alreadyBanned": false, "deletedSkills": 3 }
 ```
 
+### `POST /api/v1/users/role`
+
+Change a user role (admin only).
+
+Body:
+
+```json
+{ "handle": "user_handle", "role": "moderator" }
+```
+
+or
+
+```json
+{ "userId": "users_...", "role": "admin" }
+```
+
+Response:
+
+```json
+{ "ok": true, "role": "moderator" }
+```
+
 ### `POST /api/v1/stars/{slug}` / `DELETE /api/v1/stars/{slug}`
 
 Add/remove a star (highlights). Both endpoints are idempotent.
