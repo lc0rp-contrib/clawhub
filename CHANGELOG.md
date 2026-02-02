@@ -4,6 +4,8 @@
 
 ### Added
 - Admin: ban users and delete owned skills from management console.
+- Moderation: auto-hide skills after 4 unique reports; per-user report cap; moderators can ban users.
+- Uploads: require GitHub accounts to be at least 7 days old for skill + soul publish/import.
 
 ### Changed
 

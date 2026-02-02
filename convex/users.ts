@@ -1,8 +1,8 @@
 import { getAuthUserId } from '@convex-dev/auth/server'
 import { v } from 'convex/values'
 import { internal } from './_generated/api'
-import { internalQuery, mutation, query } from './_generated/server'
-import { assertAdmin, requireUser } from './lib/access'
+import { internalMutation, internalQuery, mutation, query } from './_generated/server'
+import { assertAdmin, assertModerator, requireUser } from './lib/access'
 import { toPublicUser } from './lib/public'
 
 const DEFAULT_ROLE = 'user'
@@ -16,6 +16,21 @@ export const getById = query({
 export const getByIdInternal = internalQuery({
   args: { userId: v.id('users') },
   handler: async (ctx, args) => ctx.db.get(args.userId),
+})
+
+export const updateGithubMetaInternal = internalMutation({
+  args: {
+    userId: v.id('users'),
+    githubCreatedAt: v.number(),
+    githubFetchedAt: v.number(),
+  },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.userId, {
+      githubCreatedAt: args.githubCreatedAt,
+      githubFetchedAt: args.githubFetchedAt,
+      updatedAt: args.githubFetchedAt,
+    })
+  },
 })
 
 export const me = query({
@@ -125,12 +140,15 @@ export const banUser = mutation({
   args: { userId: v.id('users') },
   handler: async (ctx, args) => {
     const { user } = await requireUser(ctx)
-    assertAdmin(user)
+    assertModerator(user)
 
     if (args.userId === user._id) throw new Error('Cannot ban yourself')
 
     const target = await ctx.db.get(args.userId)
     if (!target) throw new Error('User not found')
+    if (target.role === 'admin' && user.role !== 'admin') {
+      throw new Error('Forbidden')
+    }
 
     const now = Date.now()
     if (target.deletedAt) {

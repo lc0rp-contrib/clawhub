@@ -30,6 +30,8 @@ const MAX_LIST_LIMIT = 50
 const MAX_PUBLIC_LIST_LIMIT = 200
 const MAX_LIST_BULK_LIMIT = 200
 const MAX_LIST_TAKE = 1000
+const MAX_ACTIVE_REPORTS_PER_USER = 20
+const AUTO_HIDE_REPORT_THRESHOLD = 3
 
 function isSkillVersionId(
   value: Id<'skillVersions'> | null | undefined,
@@ -100,6 +102,14 @@ async function hardDeleteSkill(
     await ctx.db.delete(comment._id)
   }
 
+  const reports = await ctx.db
+    .query('skillReports')
+    .withIndex('by_skill', (q) => q.eq('skillId', skill._id))
+    .collect()
+  for (const report of reports) {
+    await ctx.db.delete(report._id)
+  }
+
   const stars = await ctx.db
     .query('stars')
     .withIndex('by_skill', (q) => q.eq('skillId', skill._id))
@@ -162,7 +172,8 @@ async function hardDeleteSkill(
     if (related._id === skill._id) continue
     if (related.canonicalSkillId === skill._id || related.forkOf?.skillId === skill._id) {
       await ctx.db.patch(related._id, {
-        canonicalSkillId: related.canonicalSkillId === skill._id ? undefined : related.canonicalSkillId,
+        canonicalSkillId:
+          related.canonicalSkillId === skill._id ? undefined : related.canonicalSkillId,
         forkOf: related.forkOf?.skillId === skill._id ? undefined : related.forkOf,
         updatedAt: now,
       })
@@ -326,7 +337,7 @@ export const getBySlug = query({
       .unique()
     if (!skill || skill.softDeletedAt) return null
     const latestVersion = skill.latestVersionId ? await ctx.db.get(skill.latestVersionId) : null
-    const owner = toPublicUser(await ctx.db.get(skill.ownerUserId))
+    const owner = await ctx.db.get(skill.ownerUserId)
     const badges = await getSkillBadgeMap(ctx, skill._id)
 
     const forkOfSkill = skill.forkOf?.skillId ? await ctx.db.get(skill.forkOf.skillId) : null
@@ -340,6 +351,62 @@ export const getBySlug = query({
 
     return {
       skill: publicSkill,
+      latestVersion,
+      owner,
+      forkOf: forkOfSkill
+        ? {
+            kind: skill.forkOf?.kind ?? 'fork',
+            version: skill.forkOf?.version ?? null,
+            skill: {
+              slug: forkOfSkill.slug,
+              displayName: forkOfSkill.displayName,
+            },
+            owner: {
+              handle: forkOfOwner?.handle ?? forkOfOwner?.name ?? null,
+              userId: forkOfOwner?._id ?? null,
+            },
+          }
+        : null,
+      canonical: canonicalSkill
+        ? {
+            skill: {
+              slug: canonicalSkill.slug,
+              displayName: canonicalSkill.displayName,
+            },
+            owner: {
+              handle: canonicalOwner?.handle ?? canonicalOwner?.name ?? null,
+              userId: canonicalOwner?._id ?? null,
+            },
+          }
+        : null,
+    }
+  },
+})
+
+export const getBySlugForStaff = query({
+  args: { slug: v.string() },
+  handler: async (ctx, args) => {
+    const { user } = await requireUser(ctx)
+    assertModerator(user)
+
+    const skill = await ctx.db
+      .query('skills')
+      .withIndex('by_slug', (q) => q.eq('slug', args.slug))
+      .unique()
+    if (!skill) return null
+
+    const latestVersion = skill.latestVersionId ? await ctx.db.get(skill.latestVersionId) : null
+    const owner = toPublicUser(await ctx.db.get(skill.ownerUserId))
+    const badges = await getSkillBadgeMap(ctx, skill._id)
+
+    const forkOfSkill = skill.forkOf?.skillId ? await ctx.db.get(skill.forkOf.skillId) : null
+    const forkOfOwner = forkOfSkill ? await ctx.db.get(forkOfSkill.ownerUserId) : null
+
+    const canonicalSkill = skill.canonicalSkillId ? await ctx.db.get(skill.canonicalSkillId) : null
+    const canonicalOwner = canonicalSkill ? await ctx.db.get(canonicalSkill.ownerUserId) : null
+
+    return {
+      skill: { ...skill, badges },
       latestVersion,
       owner,
       forkOf: forkOfSkill
@@ -616,18 +683,46 @@ export const listDuplicateCandidates = query({
   },
 })
 
+async function countActiveReportsForUser(ctx: MutationCtx, userId: Id<'users'>) {
+  const reports = await ctx.db
+    .query('skillReports')
+    .withIndex('by_user', (q) => q.eq('userId', userId))
+    .collect()
+
+  let count = 0
+  for (const report of reports) {
+    const skill = await ctx.db.get(report.skillId)
+    if (!skill) continue
+    if (skill.softDeletedAt) continue
+    if (skill.moderationStatus === 'removed') continue
+    const owner = await ctx.db.get(skill.ownerUserId)
+    if (!owner || owner.deletedAt) continue
+    count += 1
+    if (count >= MAX_ACTIVE_REPORTS_PER_USER) break
+  }
+
+  return count
+}
+
 export const report = mutation({
   args: { skillId: v.id('skills'), reason: v.optional(v.string()) },
   handler: async (ctx, args) => {
     const { userId } = await requireUser(ctx)
     const skill = await ctx.db.get(args.skillId)
-    if (!skill || skill.softDeletedAt) throw new Error('Skill not found')
+    if (!skill || skill.softDeletedAt || skill.moderationStatus === 'removed') {
+      throw new Error('Skill not found')
+    }
 
     const existing = await ctx.db
       .query('skillReports')
       .withIndex('by_skill_user', (q) => q.eq('skillId', args.skillId).eq('userId', userId))
       .unique()
     if (existing) return { ok: true as const, reported: false, alreadyReported: true }
+
+    const activeReports = await countActiveReportsForUser(ctx, userId)
+    if (activeReports >= MAX_ACTIVE_REPORTS_PER_USER) {
+      throw new Error('Report limit reached. Please wait for moderation before reporting more.')
+    }
 
     const now = Date.now()
     const reason = args.reason?.trim()
@@ -638,11 +733,47 @@ export const report = mutation({
       createdAt: now,
     })
 
-    await ctx.db.patch(skill._id, {
-      reportCount: (skill.reportCount ?? 0) + 1,
+    const nextReportCount = (skill.reportCount ?? 0) + 1
+    const shouldAutoHide = nextReportCount > AUTO_HIDE_REPORT_THRESHOLD && !skill.softDeletedAt
+    const updates: Partial<Doc<'skills'>> = {
+      reportCount: nextReportCount,
       lastReportedAt: now,
       updatedAt: now,
-    })
+    }
+    if (shouldAutoHide) {
+      Object.assign(updates, {
+        softDeletedAt: now,
+        moderationStatus: 'hidden',
+        moderationReason: 'auto.reports',
+        moderationNotes: 'Auto-hidden after 4 unique reports.',
+        hiddenAt: now,
+        lastReviewedAt: now,
+      })
+    }
+
+    await ctx.db.patch(skill._id, updates)
+
+    if (shouldAutoHide) {
+      const embeddings = await ctx.db
+        .query('skillEmbeddings')
+        .withIndex('by_skill', (q) => q.eq('skillId', skill._id))
+        .collect()
+      for (const embedding of embeddings) {
+        await ctx.db.patch(embedding._id, {
+          visibility: 'deleted',
+          updatedAt: now,
+        })
+      }
+
+      await ctx.db.insert('auditLogs', {
+        actorUserId: userId,
+        action: 'skill.auto_hide',
+        targetType: 'skill',
+        targetId: skill._id,
+        metadata: { reportCount: nextReportCount },
+        createdAt: now,
+      })
+    }
 
     return { ok: true as const, reported: true, alreadyReported: false }
   },

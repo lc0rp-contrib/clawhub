@@ -64,7 +64,7 @@ function Management() {
     | undefined
   const selectedSlug = search.skill?.trim()
   const selectedSkill = useQuery(
-    api.skills.getBySlug,
+    api.skills.getBySlugForStaff,
     staff && selectedSlug ? { slug: selectedSlug } : 'skip',
   ) as SkillBySlugResult | undefined
   const recentVersions = useQuery(api.skills.listRecentVersions, staff ? { limit: 20 } : 'skip') as
@@ -212,6 +212,11 @@ function Management() {
               const isOfficial = isSkillOfficial(skill)
               const isDeprecated = isSkillDeprecated(skill)
               const badges = getSkillBadges(skill)
+              const ownerUserId = skill.ownerUserId ?? selectedOwnerUserId
+              const ownerHandle = owner?.handle ?? owner?.name ?? 'user'
+              const isOwnerAdmin = owner?.role === 'admin'
+              const canBanOwner =
+                staff && ownerUserId && ownerUserId !== me?._id && (admin || !isOwnerAdmin)
 
               return (
                 <div key={skill._id} className="management-item">
@@ -323,6 +328,22 @@ function Management() {
                         }}
                       >
                         Hard delete
+                      </button>
+                    ) : null}
+                    {staff ? (
+                      <button
+                        className="btn"
+                        type="button"
+                        disabled={!canBanOwner}
+                        onClick={() => {
+                          if (!ownerUserId || ownerUserId === me?._id) return
+                          if (!window.confirm(`Ban @${ownerHandle} and delete their skills?`)) {
+                            return
+                          }
+                          void banUser({ userId: ownerUserId })
+                        }}
+                      >
+                        Ban user
                       </button>
                     ) : null}
                     {admin ? (
