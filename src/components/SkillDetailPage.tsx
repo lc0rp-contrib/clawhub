@@ -428,7 +428,8 @@ export function SkillDetailPage({
               <strong>Security scan in progress</strong>
               <p>
                 Your skill is being scanned by VirusTotal. It will be visible to others once the
-                scan completes and passes review.
+                scan completes. This usually takes up to 5 minutes — grab a coffee or exfoliate
+                your shell while you wait.
               </p>
             </div>
           </div>
