@@ -207,6 +207,7 @@ export const evaluateWithLlm = internalAction({
     const result = parseLlmEvalResponse(raw)
 
     if (!result) {
+      console.error(`[llmEval] Raw response (first 500 chars): ${raw.slice(0, 500)}`)
       await storeError('Failed to parse LLM evaluation response')
       return
     }
@@ -316,9 +317,9 @@ export const backfillLlmEval = internalAction({
       { cursor, batchSize },
     )
 
-    if (batch.skills.length === 0 && accTotal === 0) {
-      console.log('[llmEval:backfill] No skills to evaluate')
-      return { total: 0, scheduled: 0, skipped: 0 }
+    if (batch.skills.length === 0 && batch.done) {
+      console.log('[llmEval:backfill] No more skills to evaluate')
+      return { total: accTotal, scheduled: accScheduled, skipped: accSkipped }
     }
 
     console.log(
@@ -331,7 +332,7 @@ export const backfillLlmEval = internalAction({
         versionId,
       })) as Doc<'skillVersions'> | null
 
-      if (!version || version.llmAnalysis) {
+      if (!version || (version.llmAnalysis && version.llmAnalysis.status !== 'error')) {
         accSkipped++
         continue
       }
