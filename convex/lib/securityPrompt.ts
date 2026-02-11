@@ -23,6 +23,7 @@ export type SkillEvalContext = {
   }
   files: Array<{ path: string; size: number }>
   skillMdContent: string
+  fileContents: Array<{ path: string; content: string }>
   injectionSignals: string[]
 }
 
@@ -339,6 +340,26 @@ export function assembleEvalUserMessage(ctx: SkillEvalContext): string {
 
   // SKILL.md content
   sections.push(`### SKILL.md content (runtime instructions)\n${skillMd}`)
+
+  // All file contents
+  if (ctx.fileContents.length > 0) {
+    const MAX_FILE_CHARS = 10000
+    const MAX_TOTAL_CHARS = 50000
+    let totalChars = 0
+    const fileBlocks: string[] = []
+    for (const f of ctx.fileContents) {
+      if (totalChars >= MAX_TOTAL_CHARS) {
+        fileBlocks.push(`\n…[remaining files truncated, ${ctx.fileContents.length - fileBlocks.length} file(s) omitted]`)
+        break
+      }
+      const content = f.content.length > MAX_FILE_CHARS
+        ? f.content.slice(0, MAX_FILE_CHARS) + '\n…[truncated]'
+        : f.content
+      fileBlocks.push(`#### ${f.path}\n\`\`\`\n${content}\n\`\`\``)
+      totalChars += content.length
+    }
+    sections.push(`### File contents\nFull source of all included files. Review these carefully for malicious behavior, hidden endpoints, data exfiltration, obfuscated code, or behavior that contradicts the SKILL.md.\n\n${fileBlocks.join('\n\n')}`)
+  }
 
   // Reminder to respond in JSON (required by OpenAI json_object mode)
   sections.push('Respond with your evaluation as a single JSON object.')

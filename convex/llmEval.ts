@@ -120,10 +120,26 @@ export const evaluateWithLlm = internalAction({
       return
     }
 
-    // 4. Detect injection patterns
-    const injectionSignals = detectInjectionPatterns(skillMdContent)
+    // 4. Read all file contents
+    const fileContents: Array<{ path: string; content: string }> = []
+    for (const f of version.files) {
+      const lower = f.path.toLowerCase()
+      if (lower === 'skill.md' || lower === 'skills.md') continue
+      try {
+        const blob = await ctx.storage.get(f.storageId as Id<'_storage'>)
+        if (blob) {
+          fileContents.push({ path: f.path, content: await blob.text() })
+        }
+      } catch {
+        // Skip files that can't be read
+      }
+    }
 
-    // 5. Build eval context
+    // 5. Detect injection patterns across ALL content
+    const allContent = [skillMdContent, ...fileContents.map((f) => f.content)].join('\n')
+    const injectionSignals = detectInjectionPatterns(allContent)
+
+    // 6. Build eval context
     const parsed = version.parsed as SkillEvalContext['parsed']
     const fm = parsed.frontmatter ?? {}
 
@@ -139,6 +155,7 @@ export const evaluateWithLlm = internalAction({
       parsed,
       files: version.files.map((f) => ({ path: f.path, size: f.size })),
       skillMdContent,
+      fileContents,
       injectionSignals,
     }
 
