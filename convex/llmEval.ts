@@ -251,12 +251,18 @@ export const evaluateWithLlm = internalAction({
       `[llmEval] Evaluated ${skill.slug}@${version.version}: ${result.verdict} (${result.confidence} confidence)`,
     )
 
-    // 10. Update moderation flags if version has a sha256hash
-    if (version.sha256hash) {
+    // 10. Update moderation flags — re-read version to get the sha256hash
+    // that VT may have stored while we were evaluating (both run concurrently).
+    const freshVersion = (await ctx.runQuery(internal.skills.getVersionByIdInternal, {
+      versionId: args.versionId,
+    })) as Doc<'skillVersions'> | null
+
+    const sha256hash = freshVersion?.sha256hash ?? version.sha256hash
+    if (sha256hash) {
       const status = verdictToStatus(result.verdict)
       if (status === 'malicious' || status === 'suspicious' || status === 'clean') {
         await ctx.runMutation(internal.skills.approveSkillByHashInternal, {
-          sha256hash: version.sha256hash,
+          sha256hash,
           scanner: 'llm',
           status,
         })

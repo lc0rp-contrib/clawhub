@@ -1420,9 +1420,11 @@ export const getPendingScanSkillsInternal = internalQuery({
     const skipRecentMinutes = args.skipRecentMinutes ?? 60
     const skipThreshold = Date.now() - skipRecentMinutes * 60 * 1000
 
-    // Fetch more than needed so we can randomize selection
+    // Fetch more than needed so we can randomize selection.
+    // Include newly-published skills (hidden/pending.scan), skills stuck at
+    // scanner.vt.pending, AND LLM-evaluated skills that still need VT results.
     const poolSize = Math.min(limit * 3, 500)
-    const allSkills = await ctx.db
+    const pendingScan = await ctx.db
       .query('skills')
       .filter((q) =>
         q.and(
@@ -1431,6 +1433,36 @@ export const getPendingScanSkillsInternal = internalQuery({
         ),
       )
       .take(poolSize)
+    const vtPending = await ctx.db
+      .query('skills')
+      .filter((q) =>
+        q.and(
+          q.eq(q.field('moderationStatus'), 'active'),
+          q.eq(q.field('moderationReason'), 'scanner.vt.pending'),
+        ),
+      )
+      .take(poolSize)
+    // LLM-evaluated skills whose VT scan hasn't completed yet
+    const llmEvaluated = await ctx.db
+      .query('skills')
+      .filter((q) =>
+        q.or(
+          q.eq(q.field('moderationReason'), 'scanner.llm.clean'),
+          q.eq(q.field('moderationReason'), 'scanner.llm.suspicious'),
+          q.eq(q.field('moderationReason'), 'scanner.llm.malicious'),
+        ),
+      )
+      .take(poolSize)
+
+    // Dedup across pools by skill ID
+    const seen = new Set<string>()
+    const allSkills: typeof pendingScan = []
+    for (const skill of [...pendingScan, ...vtPending, ...llmEvaluated]) {
+      if (!seen.has(skill._id)) {
+        seen.add(skill._id)
+        allSkills.push(skill)
+      }
+    }
 
     // Filter out recently checked skills
     const skills = allSkills.filter(
@@ -1453,6 +1485,8 @@ export const getPendingScanSkillsInternal = internalQuery({
 
     for (const skill of selected) {
       const version = skill.latestVersionId ? await ctx.db.get(skill.latestVersionId) : null
+      // Skip skills where version already has vtAnalysis or lacks sha256hash
+      if (version?.vtAnalysis || !version?.sha256hash) continue
       results.push({
         skillId: skill._id,
         versionId: version?._id ?? null,
@@ -1514,8 +1548,10 @@ export const getActiveSkillsMissingVTCacheInternal = internalQuery({
   args: { limit: v.optional(v.number()) },
   handler: async (ctx, args) => {
     const limit = args.limit ?? 100
-    // Use scanner.vt.pending filter to only get skills waiting for VT
-    const pendingSkills = await ctx.db
+    const poolSize = limit * 2 // Take more to account for some having vtAnalysis
+
+    // Skills waiting for VT + LLM-evaluated skills that still need VT cache
+    const vtPending = await ctx.db
       .query('skills')
       .filter((q) =>
         q.and(
@@ -1523,7 +1559,27 @@ export const getActiveSkillsMissingVTCacheInternal = internalQuery({
           q.eq(q.field('moderationReason'), 'scanner.vt.pending'),
         ),
       )
-      .take(limit * 2) // Take more to account for some having vtAnalysis
+      .take(poolSize)
+    const llmEvaluated = await ctx.db
+      .query('skills')
+      .filter((q) =>
+        q.or(
+          q.eq(q.field('moderationReason'), 'scanner.llm.clean'),
+          q.eq(q.field('moderationReason'), 'scanner.llm.suspicious'),
+          q.eq(q.field('moderationReason'), 'scanner.llm.malicious'),
+        ),
+      )
+      .take(poolSize)
+
+    // Dedup across pools
+    const seen = new Set<string>()
+    const allSkills: typeof vtPending = []
+    for (const skill of [...vtPending, ...llmEvaluated]) {
+      if (!seen.has(skill._id)) {
+        seen.add(skill._id)
+        allSkills.push(skill)
+      }
+    }
 
     const results: Array<{
       skillId: Id<'skills'>
@@ -1532,7 +1588,7 @@ export const getActiveSkillsMissingVTCacheInternal = internalQuery({
       slug: string
     }> = []
 
-    for (const skill of pendingSkills) {
+    for (const skill of allSkills) {
       if (results.length >= limit) break
       if (!skill.latestVersionId) continue
       const version = await ctx.db.get(skill.latestVersionId)
@@ -2086,6 +2142,64 @@ export const approveSkillByHashInternal = internalMutation({
     return { ok: true, skillId: version.skillId, versionId: version._id }
   },
 })
+
+/**
+ * Lighter VT-only escalation: adds moderation flags and hides/bans for malicious,
+ * but never touches moderationReason (preserves the LLM verdict).
+ */
+export const escalateByVtInternal = internalMutation({
+  args: {
+    sha256hash: v.string(),
+    status: v.union(v.literal('malicious'), v.literal('suspicious')),
+  },
+  handler: async (ctx, args) => {
+    const version = await ctx.db
+      .query('skillVersions')
+      .withIndex('by_sha256hash', (q) => q.eq('sha256hash', args.sha256hash))
+      .unique()
+
+    if (!version) throw new Error('Version not found for hash')
+
+    const skill = await ctx.db.get(version.skillId)
+    if (!skill) return
+
+    const isMalicious = args.status === 'malicious'
+    const existingFlags: string[] = (skill.moderationFlags as string[] | undefined) ?? []
+    const alreadyBlocked = existingFlags.includes('blocked.malware')
+
+    // Determine new flags — stricter verdict always wins
+    let newFlags: string[]
+    if (isMalicious || alreadyBlocked) {
+      newFlags = ['blocked.malware']
+    } else {
+      newFlags = ['flagged.suspicious']
+    }
+
+    const patch: Record<string, unknown> = {
+      moderationFlags: newFlags,
+      updatedAt: Date.now(),
+    }
+
+    // Only hide for malicious — suspicious stays visible with a flag
+    if (isMalicious) {
+      patch.moderationStatus = 'hidden'
+    }
+
+    await ctx.db.patch(skill._id, patch)
+
+    // Auto-ban authors of malicious skills
+    if (isMalicious && skill.ownerUserId) {
+      await ctx.scheduler.runAfter(0, internal.users.autobanMalwareAuthorInternal, {
+        ownerUserId: skill.ownerUserId,
+        sha256hash: args.sha256hash,
+        slug: skill.slug,
+      })
+    }
+
+    return { ok: true, skillId: version.skillId, versionId: version._id }
+  },
+})
+
 export const getVersionBySkillAndVersion = query({
   args: { skillId: v.id('skills'), version: v.string() },
   handler: async (ctx, args) => {

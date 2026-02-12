@@ -4,7 +4,8 @@ import type { GenericMutationCtx } from 'convex/server'
 import { ConvexError } from 'convex/values'
 import type { DataModel, Id } from './_generated/dataModel'
 
-export const BANNED_REAUTH_MESSAGE = 'Your account has been suspended.'
+export const BANNED_REAUTH_MESSAGE =
+  'Your account has been banned for uploading malicious skills. If you believe this is a mistake, please contact security@openclaw.ai and we will work with you to restore access.'
 
 export async function handleSoftDeletedUserReauth(
   ctx: GenericMutationCtx<DataModel>,

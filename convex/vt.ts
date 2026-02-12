@@ -393,21 +393,14 @@ export const scanWithVirusTotal = internalAction({
             },
           })
 
-          if (isSafe) {
-            await ctx.runMutation(internal.skills.approveSkillByHashInternal, {
+          // VT is supplementary — only escalate (never override LLM verdict)
+          if (!isSafe && (status === 'malicious' || status === 'suspicious')) {
+            await ctx.runMutation(internal.skills.escalateByVtInternal, {
               sha256hash,
-              scanner: 'vt',
-              status: 'clean',
-              moderationStatus: 'active',
-            })
-          } else if (status === 'malicious' || status === 'suspicious') {
-            await ctx.runMutation(internal.skills.approveSkillByHashInternal, {
-              sha256hash,
-              scanner: 'vt',
               status,
-              moderationStatus: 'hidden',
             })
           }
+          // Clean VT result: vtAnalysis already written above — don't touch moderation
           return
         }
 
@@ -448,13 +441,9 @@ export const scanWithVirusTotal = internalAction({
         `Successfully uploaded version ${args.versionId} to VT. Hash: ${sha256hash}. Analysis ID: ${result.data.id}`,
       )
 
-      // Mark skill as pending scan so it enters the poll queue
-      // This prevents it from being picked up again by scanUnscannedSkills
-      await ctx.runMutation(internal.skills.approveSkillByHashInternal, {
-        sha256hash,
-        scanner: 'vt',
-        status: 'pending',
-      })
+      // Don't set moderation state to scanner.vt.pending here — the LLM eval
+      // runs concurrently and will set the initial moderation state. VT only
+      // updates moderation when it has an actual verdict (clean/suspicious/malicious).
     } catch (error) {
       console.error('Failed to upload to VirusTotal:', error)
     }
@@ -529,12 +518,16 @@ export const pollPendingScans = internalAction({
         const vtResult = await checkExistingFile(apiKey, sha256hash)
         if (!vtResult) {
           console.log(`[vt:pollPendingScans] Hash ${sha256hash} not found in VT yet`)
-          // Check if we've exceeded max attempts
+          // Check if we've exceeded max attempts — write stale vtAnalysis so it
+          // drops out of the poll query without overwriting LLM moderationReason
           if (checkCount + 1 >= MAX_CHECK_COUNT) {
             console.warn(
               `[vt:pollPendingScans] Skill ${skillId} exceeded max checks, marking stale`,
             )
-            await ctx.runMutation(internal.skills.markScanStaleInternal, { skillId })
+            await ctx.runMutation(internal.skills.updateVersionScanResultsInternal, {
+              versionId,
+              vtAnalysis: { status: 'stale', checkedAt: Date.now() },
+            })
             staled++
           }
           continue
@@ -550,12 +543,16 @@ export const pollPendingScans = internalAction({
             `[vt:pollPendingScans] Hash ${sha256hash} has no Code Insight, requesting rescan`,
           )
           await requestRescan(apiKey, sha256hash)
-          // Check if we've exceeded max attempts
+          // Check if we've exceeded max attempts — write stale vtAnalysis so it
+          // drops out of the poll query without overwriting LLM moderationReason
           if (checkCount + 1 >= MAX_CHECK_COUNT) {
             console.warn(
               `[vt:pollPendingScans] Skill ${skillId} exceeded max checks, marking stale`,
             )
-            await ctx.runMutation(internal.skills.markScanStaleInternal, { skillId })
+            await ctx.runMutation(internal.skills.updateVersionScanResultsInternal, {
+              versionId,
+              vtAnalysis: { status: 'stale', checkedAt: Date.now() },
+            })
             staled++
           }
           continue
@@ -581,11 +578,13 @@ export const pollPendingScans = internalAction({
           },
         })
 
-        await ctx.runMutation(internal.skills.approveSkillByHashInternal, {
-          sha256hash,
-          scanner: 'vt',
-          status,
-        })
+        // VT is supplementary — only escalate for malicious/suspicious
+        if (status === 'malicious' || status === 'suspicious') {
+          await ctx.runMutation(internal.skills.escalateByVtInternal, {
+            sha256hash,
+            status,
+          })
+        }
         updated++
       } catch (error) {
         console.error(`[vt:pollPendingScans] Error checking hash ${sha256hash}:`, error)
@@ -835,9 +834,8 @@ export const rescanActiveSkills = internalAction({
         if (status === 'malicious' || status === 'suspicious') {
           console.warn(`[vt:rescan] ${slug}: verdict changed to ${status}!`)
           accFlaggedSkills.push({ slug, status })
-          await ctx.runMutation(internal.skills.approveSkillByHashInternal, {
+          await ctx.runMutation(internal.skills.escalateByVtInternal, {
             sha256hash,
-            scanner: 'vt-rescan',
             status,
           })
           accUpdated++
