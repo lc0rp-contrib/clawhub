@@ -135,9 +135,15 @@ export type BackfillActionArgs = {
   batchSize?: number
   maxBatches?: number
   useAi?: boolean
+  cursor?: string
 }
 
-export type BackfillActionResult = { ok: true; stats: BackfillStats }
+export type BackfillActionResult = {
+  ok: true
+  stats: BackfillStats
+  isDone: boolean
+  cursor: string | null
+}
 
 export async function backfillSkillSummariesInternalHandler(
   ctx: ActionCtx,
@@ -158,7 +164,7 @@ export async function backfillSkillSummariesInternalHandler(
     missingStorageBlob: 0,
   }
 
-  let cursor: string | null = null
+  let cursor: string | null = args.cursor ?? null
   let isDone = false
 
   for (let i = 0; i < maxBatches; i++) {
@@ -231,11 +237,7 @@ export async function backfillSkillSummariesInternalHandler(
     if (isDone) break
   }
 
-  if (!isDone) {
-    throw new ConvexError('Backfill incomplete (maxBatches reached)')
-  }
-
-  return { ok: true as const, stats: totals }
+  return { ok: true as const, stats: totals, isDone, cursor }
 }
 
 export const backfillSkillSummariesInternal = internalAction({
@@ -244,6 +246,7 @@ export const backfillSkillSummariesInternal = internalAction({
     batchSize: v.optional(v.number()),
     maxBatches: v.optional(v.number()),
     useAi: v.optional(v.boolean()),
+    cursor: v.optional(v.string()),
   },
   handler: backfillSkillSummariesInternalHandler,
 })
@@ -254,6 +257,7 @@ export const backfillSkillSummaries: ReturnType<typeof action> = action({
     batchSize: v.optional(v.number()),
     maxBatches: v.optional(v.number()),
     useAi: v.optional(v.boolean()),
+    cursor: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<BackfillActionResult> => {
     const { user } = await requireUserFromAction(ctx)
