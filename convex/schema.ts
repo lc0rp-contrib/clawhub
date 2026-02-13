@@ -79,6 +79,25 @@ const skills = defineTable({
   ),
   moderationNotes: v.optional(v.string()),
   moderationReason: v.optional(v.string()),
+  quality: v.optional(
+    v.object({
+      score: v.number(),
+      decision: v.union(v.literal('pass'), v.literal('quarantine'), v.literal('reject')),
+      trustTier: v.union(v.literal('low'), v.literal('medium'), v.literal('trusted')),
+      similarRecentCount: v.number(),
+      reason: v.string(),
+      signals: v.object({
+        bodyChars: v.number(),
+        bodyWords: v.number(),
+        uniqueWordRatio: v.number(),
+        headingCount: v.number(),
+        bulletCount: v.number(),
+        templateMarkerHits: v.number(),
+        genericSummary: v.boolean(),
+      }),
+      evaluatedAt: v.number(),
+    }),
+  ),
   moderationFlags: v.optional(v.array(v.string())),
   lastReviewedAt: v.optional(v.number()),
   // VT scan tracking

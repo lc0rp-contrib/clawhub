@@ -21,6 +21,207 @@ import type { WebhookSkillPayload } from './webhooks'
 
 const MAX_TOTAL_BYTES = 50 * 1024 * 1024
 const MAX_FILES_FOR_EMBEDDING = 40
+const QUALITY_WINDOW_MS = 24 * 60 * 60 * 1000
+const QUALITY_ACTIVITY_LIMIT = 60
+const TRUST_TIER_ACCOUNT_AGE_LOW_MS = 30 * 24 * 60 * 60 * 1000
+const TRUST_TIER_ACCOUNT_AGE_MEDIUM_MS = 90 * 24 * 60 * 60 * 1000
+const TRUST_TIER_SKILLS_LOW = 10
+const TRUST_TIER_SKILLS_MEDIUM = 50
+const TEMPLATE_MARKERS = [
+  'expert guidance for',
+  'practical skill guidance',
+  'step-by-step tutorials',
+  'tips and techniques',
+  'project ideas',
+  'resource recommendations',
+  'help with this skill',
+  'learning guidance',
+] as const
+
+type TrustTier = 'low' | 'medium' | 'trusted'
+
+type QualitySignals = {
+  bodyChars: number
+  bodyWords: number
+  uniqueWordRatio: number
+  headingCount: number
+  bulletCount: number
+  templateMarkerHits: number
+  genericSummary: boolean
+  structuralFingerprint: string
+}
+
+type QualityAssessment = {
+  score: number
+  decision: 'pass' | 'quarantine' | 'reject'
+  reason: string
+  trustTier: TrustTier
+  similarRecentCount: number
+  signals: Omit<QualitySignals, 'structuralFingerprint'>
+}
+
+function stripFrontmatter(raw: string) {
+  return raw.replace(/^---\s*\n[\s\S]*?\n---\s*\n?/m, '')
+}
+
+function tokenizeWords(text: string) {
+  return (text.toLowerCase().match(/[a-z0-9][a-z0-9'-]*/g) ?? []).filter((word) => word.length > 1)
+}
+
+function wordBucket(text: string) {
+  const words = tokenizeWords(text).length
+  if (words <= 2) return 's'
+  if (words <= 6) return 'm'
+  return 'l'
+}
+
+function toStructuralFingerprint(markdown: string) {
+  const body = stripFrontmatter(markdown)
+  const lines = body
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(0, 80)
+
+  return lines
+    .map((line) => {
+      if (line.startsWith('### ')) return `h3:${wordBucket(line.slice(4))}`
+      if (line.startsWith('## ')) return `h2:${wordBucket(line.slice(3))}`
+      if (line.startsWith('# ')) return `h1:${wordBucket(line.slice(2))}`
+      if (/^[-*]\s+/.test(line)) return `b:${wordBucket(line.replace(/^[-*]\s+/, ''))}`
+      if (/^\d+\.\s+/.test(line)) return `n:${wordBucket(line.replace(/^\d+\.\s+/, ''))}`
+      return `p:${wordBucket(line)}`
+    })
+    .join('|')
+}
+
+function getTrustTier(accountAgeMs: number, totalSkills: number): TrustTier {
+  if (accountAgeMs < TRUST_TIER_ACCOUNT_AGE_LOW_MS || totalSkills < TRUST_TIER_SKILLS_LOW) {
+    return 'low'
+  }
+  if (accountAgeMs < TRUST_TIER_ACCOUNT_AGE_MEDIUM_MS || totalSkills < TRUST_TIER_SKILLS_MEDIUM) {
+    return 'medium'
+  }
+  return 'trusted'
+}
+
+function computeQualitySignals(args: {
+  readmeText: string
+  summary: string | null | undefined
+}): QualitySignals {
+  const body = stripFrontmatter(args.readmeText)
+  const bodyChars = body.replace(/\s+/g, '').length
+  const words = tokenizeWords(body)
+  const uniqueWordRatio = words.length ? new Set(words).size / words.length : 0
+  const lines = body.split('\n')
+  const headingCount = lines.filter((line) => /^#{1,3}\s+/.test(line.trim())).length
+  const bulletCount = lines.filter((line) => /^[-*]\s+/.test(line.trim())).length
+  const bodyLower = body.toLowerCase()
+  const templateMarkerHits = TEMPLATE_MARKERS.filter((marker) => bodyLower.includes(marker)).length
+  const summary = (args.summary ?? '').trim().toLowerCase()
+  const genericSummary = /^expert guidance for [a-z0-9-]+\.?$/.test(summary)
+
+  return {
+    bodyChars,
+    bodyWords: words.length,
+    uniqueWordRatio,
+    headingCount,
+    bulletCount,
+    templateMarkerHits,
+    genericSummary,
+    structuralFingerprint: toStructuralFingerprint(args.readmeText),
+  }
+}
+
+function scoreQuality(signals: QualitySignals) {
+  let score = 100
+  if (signals.bodyChars < 250) score -= 28
+  if (signals.bodyWords < 80) score -= 24
+  if (signals.uniqueWordRatio < 0.45) score -= 14
+  if (signals.headingCount < 2) score -= 10
+  if (signals.bulletCount < 3) score -= 8
+  score -= Math.min(28, signals.templateMarkerHits * 9)
+  if (signals.genericSummary) score -= 20
+  return Math.max(0, score)
+}
+
+function evaluateQuality(args: {
+  signals: QualitySignals
+  trustTier: TrustTier
+  similarRecentCount: number
+}): QualityAssessment {
+  const { signals, trustTier, similarRecentCount } = args
+  const score = scoreQuality(signals)
+  const rejectWordsThreshold = trustTier === 'low' ? 45 : trustTier === 'medium' ? 35 : 28
+  const rejectCharsThreshold = trustTier === 'low' ? 260 : trustTier === 'medium' ? 180 : 140
+  const quarantineScoreThreshold = trustTier === 'low' ? 72 : trustTier === 'medium' ? 60 : 50
+  const similarityRejectThreshold = trustTier === 'low' ? 5 : trustTier === 'medium' ? 8 : 12
+
+  const hardReject =
+    signals.bodyWords < rejectWordsThreshold ||
+    signals.bodyChars < rejectCharsThreshold ||
+    (signals.templateMarkerHits >= 3 && signals.bodyWords < 120) ||
+    similarRecentCount >= similarityRejectThreshold
+
+  if (hardReject) {
+    const reason =
+      similarRecentCount >= similarityRejectThreshold
+        ? 'Skill appears to be repeated template spam from this account.'
+        : 'Skill content is too thin or templated. Add meaningful, specific documentation.'
+    return {
+      score,
+      decision: 'reject',
+      reason,
+      trustTier,
+      similarRecentCount,
+      signals: {
+        bodyChars: signals.bodyChars,
+        bodyWords: signals.bodyWords,
+        uniqueWordRatio: signals.uniqueWordRatio,
+        headingCount: signals.headingCount,
+        bulletCount: signals.bulletCount,
+        templateMarkerHits: signals.templateMarkerHits,
+        genericSummary: signals.genericSummary,
+      },
+    }
+  }
+
+  if (score < quarantineScoreThreshold) {
+    return {
+      score,
+      decision: 'quarantine',
+      reason: 'Skill quality is low and requires moderation review before being listed.',
+      trustTier,
+      similarRecentCount,
+      signals: {
+        bodyChars: signals.bodyChars,
+        bodyWords: signals.bodyWords,
+        uniqueWordRatio: signals.uniqueWordRatio,
+        headingCount: signals.headingCount,
+        bulletCount: signals.bulletCount,
+        templateMarkerHits: signals.templateMarkerHits,
+        genericSummary: signals.genericSummary,
+      },
+    }
+  }
+
+  return {
+    score,
+    decision: 'pass',
+    reason: 'Quality checks passed.',
+    trustTier,
+    similarRecentCount,
+    signals: {
+      bodyChars: signals.bodyChars,
+      bodyWords: signals.bodyWords,
+      uniqueWordRatio: signals.uniqueWordRatio,
+      headingCount: signals.headingCount,
+      bulletCount: signals.bulletCount,
+      templateMarkerHits: signals.templateMarkerHits,
+      genericSummary: signals.genericSummary,
+    },
+  }
+}
 
 export type PublishResult = {
   skillId: Id<'skills'>
@@ -70,6 +271,10 @@ export async function publishVersionForUser(
   }
 
   await requireGitHubAccountAge(ctx, userId)
+  const existingSkill = (await ctx.runQuery(internal.skills.getSkillBySlugInternal, {
+    slug,
+  })) as Doc<'skills'> | null
+  const isNewSkill = !existingSkill
 
   const suppliedChangelog = args.changelog.trim()
   const changelogSource = suppliedChangelog ? ('user' as const) : ('auto' as const)
@@ -102,7 +307,69 @@ export async function publishVersionForUser(
   const readmeText = await fetchText(ctx, readmeFile.storageId)
   const frontmatter = parseFrontmatter(readmeText)
   const clawdis = parseClawdisMetadata(frontmatter)
-  const metadata = mergeSourceIntoMetadata(getFrontmatterMetadata(frontmatter), args.source)
+  const owner = (await ctx.runQuery(internal.users.getByIdInternal, {
+    userId,
+  })) as Doc<'users'> | null
+  const ownerCreatedAt = owner?.createdAt ?? owner?._creationTime ?? Date.now()
+  const now = Date.now()
+  const frontmatterMetadata = getFrontmatterMetadata(frontmatter)
+  const summary =
+    frontmatterMetadata &&
+    typeof frontmatterMetadata === 'object' &&
+    !Array.isArray(frontmatterMetadata) &&
+    typeof (frontmatterMetadata as Record<string, unknown>).description === 'string'
+      ? ((frontmatterMetadata as Record<string, unknown>).description as string)
+      : undefined
+
+  let qualityAssessment: QualityAssessment | null = null
+  if (isNewSkill) {
+    const ownerActivity = (await ctx.runQuery(internal.skills.getOwnerSkillActivityInternal, {
+      ownerUserId: userId,
+      limit: QUALITY_ACTIVITY_LIMIT,
+    })) as Array<{
+      slug: string
+      summary?: string
+      createdAt: number
+      latestVersionId?: Id<'skillVersions'>
+    }>
+
+    const trustTier = getTrustTier(now - ownerCreatedAt, ownerActivity.length)
+    const qualitySignals = computeQualitySignals({
+      readmeText,
+      summary,
+    })
+    const recentCandidates = ownerActivity.filter(
+      (entry) =>
+        entry.slug !== slug && entry.createdAt >= now - QUALITY_WINDOW_MS && entry.latestVersionId,
+    )
+    let similarRecentCount = 0
+    for (const entry of recentCandidates) {
+      const version = (await ctx.runQuery(internal.skills.getVersionByIdInternal, {
+        versionId: entry.latestVersionId as Id<'skillVersions'>,
+      })) as Doc<'skillVersions'> | null
+      if (!version) continue
+      const candidateReadmeFile = version.files.find((file) => {
+        const lower = file.path.toLowerCase()
+        return lower === 'skill.md' || lower === 'skills.md'
+      })
+      if (!candidateReadmeFile) continue
+      const candidateText = await fetchText(ctx, candidateReadmeFile.storageId)
+      if (toStructuralFingerprint(candidateText) === qualitySignals.structuralFingerprint) {
+        similarRecentCount += 1
+      }
+    }
+
+    qualityAssessment = evaluateQuality({
+      signals: qualitySignals,
+      trustTier,
+      similarRecentCount,
+    })
+    if (qualityAssessment.decision === 'reject') {
+      throw new ConvexError(qualityAssessment.reason)
+    }
+  }
+
+  const metadata = mergeSourceIntoMetadata(frontmatterMetadata, args.source, qualityAssessment)
 
   const otherFiles = [] as Array<{ path: string; content: string }>
   for (const file of safeFiles) {
@@ -168,6 +435,16 @@ export async function publishVersionForUser(
       clawdis,
     },
     embedding,
+    qualityAssessment: qualityAssessment
+      ? {
+          decision: qualityAssessment.decision,
+          score: qualityAssessment.score,
+          reason: qualityAssessment.reason,
+          trustTier: qualityAssessment.trustTier,
+          similarRecentCount: qualityAssessment.similarRecentCount,
+          signals: qualityAssessment.signals,
+        }
+      : undefined,
   })) as PublishResult
 
   await ctx.scheduler.runAfter(0, internal.vt.scanWithVirusTotal, {
@@ -178,9 +455,6 @@ export async function publishVersionForUser(
     versionId: publishResult.versionId,
   })
 
-  const owner = (await ctx.runQuery(internal.users.getByIdInternal, {
-    userId,
-  })) as Doc<'users'> | null
   const ownerHandle = owner?.handle ?? owner?.displayName ?? owner?.name ?? 'unknown'
 
   void ctx.scheduler
@@ -205,25 +479,48 @@ export async function publishVersionForUser(
   return publishResult
 }
 
-function mergeSourceIntoMetadata(metadata: unknown, source: PublishVersionArgs['source']) {
-  if (!source) return metadata === undefined ? undefined : metadata
-  const sourceValue = {
-    kind: source.kind,
-    url: source.url,
-    repo: source.repo,
-    ref: source.ref,
-    commit: source.commit,
-    path: source.path,
-    importedAt: source.importedAt,
+function mergeSourceIntoMetadata(
+  metadata: unknown,
+  source: PublishVersionArgs['source'],
+  qualityAssessment: QualityAssessment | null = null,
+) {
+  const base =
+    metadata && typeof metadata === 'object' && !Array.isArray(metadata)
+      ? { ...(metadata as Record<string, unknown>) }
+      : {}
+
+  if (source) {
+    base.source = {
+      kind: source.kind,
+      url: source.url,
+      repo: source.repo,
+      ref: source.ref,
+      commit: source.commit,
+      path: source.path,
+      importedAt: source.importedAt,
+    }
   }
 
-  if (!metadata) return { source: sourceValue }
-  if (typeof metadata !== 'object' || Array.isArray(metadata)) return { source: sourceValue }
-  return { ...(metadata as Record<string, unknown>), source: sourceValue }
+  if (qualityAssessment) {
+    base._clawhubQuality = {
+      score: qualityAssessment.score,
+      decision: qualityAssessment.decision,
+      trustTier: qualityAssessment.trustTier,
+      similarRecentCount: qualityAssessment.similarRecentCount,
+      signals: qualityAssessment.signals,
+      reason: qualityAssessment.reason,
+      evaluatedAt: Date.now(),
+    }
+  }
+
+  return Object.keys(base).length ? base : undefined
 }
 
 export const __test = {
   mergeSourceIntoMetadata,
+  computeQualitySignals,
+  evaluateQuality,
+  toStructuralFingerprint,
 }
 
 export async function queueHighlightedWebhook(ctx: MutationCtx, skillId: Id<'skills'>) {

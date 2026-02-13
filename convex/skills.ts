@@ -765,6 +765,28 @@ export const getSkillBySlugInternal = internalQuery({
   },
 })
 
+export const getOwnerSkillActivityInternal = internalQuery({
+  args: {
+    ownerUserId: v.id('users'),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const limit = clampInt(args.limit ?? 60, 1, 500)
+    const skills = await ctx.db
+      .query('skills')
+      .withIndex('by_owner', (q) => q.eq('ownerUserId', args.ownerUserId))
+      .order('desc')
+      .take(limit)
+
+    return skills.map((skill) => ({
+      slug: skill.slug,
+      summary: skill.summary,
+      createdAt: skill.createdAt,
+      latestVersionId: skill.latestVersionId,
+    }))
+  },
+})
+
 /**
  * Get quick stats without loading versions (fast).
  */
@@ -1561,6 +1583,7 @@ export const getPendingScanSkillsInternal = internalQuery({
     const candidates = allSkills.filter((skill) => {
       const reason = skill.moderationReason
       if (skill.moderationStatus === 'hidden' && reason === 'pending.scan') return true
+      if (skill.moderationStatus === 'hidden' && reason === 'quality.low') return true
       if (skill.moderationStatus === 'active' && reason === 'scanner.vt.pending') return true
       return (
         reason === 'scanner.llm.clean' ||
@@ -2237,16 +2260,30 @@ export const approveSkillByHashInternal = internalMutation({
         }
       }
 
-      await ctx.db.patch(skill._id, {
-        moderationStatus: shouldHideSuspicious ? 'hidden' : 'active',
-        moderationReason: `scanner.${args.scanner}.${args.status}`,
-        moderationFlags: newFlags,
-        moderationNotes: shouldHideSuspicious
+      const qualityLocked = skill.moderationReason === 'quality.low' && !isMalicious
+      const nextModerationStatus = qualityLocked
+        ? 'hidden'
+        : shouldHideSuspicious
+          ? 'hidden'
+          : 'active'
+      const nextModerationReason = qualityLocked
+        ? 'quality.low'
+        : `scanner.${args.scanner}.${args.status}`
+      const nextModerationNotes = qualityLocked
+        ? (skill.moderationNotes ??
+          'Quality gate quarantine is still active. Manual moderation review required.')
+        : shouldHideSuspicious
           ? 'Auto-hidden: suspicious result from low-trust publisher.'
-          : undefined,
-        hiddenAt: shouldHideSuspicious ? now : undefined,
+          : undefined
+
+      await ctx.db.patch(skill._id, {
+        moderationStatus: nextModerationStatus,
+        moderationReason: nextModerationReason,
+        moderationFlags: newFlags,
+        moderationNotes: nextModerationNotes,
+        hiddenAt: nextModerationStatus === 'hidden' ? now : undefined,
         hiddenBy: undefined,
-        lastReviewedAt: shouldHideSuspicious ? now : undefined,
+        lastReviewedAt: nextModerationStatus === 'hidden' ? now : undefined,
         updatedAt: now,
       })
 
@@ -2870,6 +2907,24 @@ export const insertVersion = internalMutation({
       metadata: v.optional(v.any()),
       clawdis: v.optional(v.any()),
     }),
+    qualityAssessment: v.optional(
+      v.object({
+        decision: v.union(v.literal('pass'), v.literal('quarantine'), v.literal('reject')),
+        score: v.number(),
+        reason: v.string(),
+        trustTier: v.union(v.literal('low'), v.literal('medium'), v.literal('trusted')),
+        similarRecentCount: v.number(),
+        signals: v.object({
+          bodyChars: v.number(),
+          bodyWords: v.number(),
+          uniqueWordRatio: v.number(),
+          headingCount: v.number(),
+          bulletCount: v.number(),
+          templateMarkerHits: v.number(),
+          genericSummary: v.boolean(),
+        }),
+      }),
+    ),
     embedding: v.array(v.number()),
   },
   handler: async (ctx, args) => {
@@ -2887,6 +2942,24 @@ export const insertVersion = internalMutation({
     }
 
     const now = Date.now()
+    const qualityAssessment = args.qualityAssessment
+    const isQualityQuarantine = qualityAssessment?.decision === 'quarantine'
+    const moderationReason = isQualityQuarantine ? 'quality.low' : 'pending.scan'
+    const moderationNotes = isQualityQuarantine
+      ? `Auto-quarantined by quality gate (score=${qualityAssessment.score}, tier=${qualityAssessment.trustTier}, similar=${qualityAssessment.similarRecentCount}).`
+      : undefined
+    const qualityRecord = qualityAssessment
+      ? {
+          score: qualityAssessment.score,
+          decision: qualityAssessment.decision,
+          trustTier: qualityAssessment.trustTier,
+          similarRecentCount: qualityAssessment.similarRecentCount,
+          reason: qualityAssessment.reason,
+          signals: qualityAssessment.signals,
+          evaluatedAt: now,
+        }
+      : undefined
+
     if (!skill) {
       const ownerTrustSignals = await getOwnerTrustSignals(ctx, user, now)
       enforceNewSkillRateLimit(ownerTrustSignals)
@@ -2953,7 +3026,9 @@ export const insertVersion = internalMutation({
           deprecated: undefined,
         },
         moderationStatus: 'hidden',
-        moderationReason: 'pending.scan',
+        moderationReason,
+        moderationNotes,
+        quality: qualityRecord,
         moderationFlags: moderationFlags.length ? moderationFlags : undefined,
         reportCount: 0,
         lastReportedAt: undefined,
@@ -3021,7 +3096,9 @@ export const insertVersion = internalMutation({
       stats: { ...skill.stats, versions: skill.stats.versions + 1 },
       softDeletedAt: undefined,
       moderationStatus: 'hidden',
-      moderationReason: 'pending.scan',
+      moderationReason,
+      moderationNotes,
+      quality: qualityRecord ?? skill.quality,
       moderationFlags: moderationFlags.length ? moderationFlags : undefined,
       updatedAt: now,
     })
