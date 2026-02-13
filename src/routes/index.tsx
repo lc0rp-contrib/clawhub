@@ -24,7 +24,13 @@ function SkillsHome() {
       batch: 'highlighted',
       limit: 6,
     }) as PublicSkill[]) ?? []
-  const latest = (useQuery(api.skills.list, { limit: 12 }) as PublicSkill[]) ?? []
+  const popularResult = useQuery(api.skills.listPublicPageV2, {
+    paginationOpts: { cursor: null, numItems: 12 },
+    sort: 'downloads',
+    dir: 'desc',
+    nonSuspiciousOnly: true,
+  }) as { page: PublicSkill[] } | undefined
+  const popular = popularResult?.page ?? []
 
   return (
     <main>
@@ -48,7 +54,7 @@ function SkillsHome() {
                   sort: undefined,
                   dir: undefined,
                   highlighted: undefined,
-                  nonSuspicious: undefined,
+                  nonSuspicious: true,
                   view: undefined,
                   focus: undefined,
                 }}
@@ -93,13 +99,13 @@ function SkillsHome() {
       </section>
 
       <section className="section">
-        <h2 className="section-title">Latest drops</h2>
-        <p className="section-subtitle">Newest uploads across the registry.</p>
+        <h2 className="section-title">Popular skills</h2>
+        <p className="section-subtitle">Most-downloaded, non-suspicious picks.</p>
         <div className="grid">
-          {latest.length === 0 ? (
+          {popular.length === 0 ? (
             <div className="card">No skills yet. Be the first.</div>
           ) : (
-            latest.map((skill) => (
+            popular.map((skill) => (
               <SkillCard
                 key={skill._id}
                 skill={skill}
@@ -122,13 +128,13 @@ function SkillsHome() {
               sort: undefined,
               dir: undefined,
               highlighted: undefined,
-              nonSuspicious: undefined,
+              nonSuspicious: true,
               view: undefined,
               focus: undefined,
             }}
             className="btn"
           >
-            See all skills
+            See all non-suspicious skills
           </Link>
         </div>
       </section>
