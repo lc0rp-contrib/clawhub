@@ -393,6 +393,10 @@ export function SkillDetailPage({
   const [tagName, setTagName] = useState('latest')
   const [tagVersionId, setTagVersionId] = useState<Id<'skillVersions'> | ''>('')
   const [activeTab, setActiveTab] = useState<'files' | 'compare' | 'versions'>('files')
+  const [isReportDialogOpen, setIsReportDialogOpen] = useState(false)
+  const [reportReason, setReportReason] = useState('')
+  const [reportError, setReportError] = useState<string | null>(null)
+  const [isSubmittingReport, setIsSubmittingReport] = useState(false)
 
   const isLoadingSkill = result === undefined
   const skill = result?.skill
@@ -502,6 +506,12 @@ export function SkillDetailPage({
     return stripFrontmatter(readme)
   }, [readme])
   const latestFiles: SkillFile[] = latestVersion?.files ?? []
+  const closeReportDialog = () => {
+    setIsReportDialogOpen(false)
+    setReportReason('')
+    setReportError(null)
+    setIsSubmittingReport(false)
+  }
 
   useEffect(() => {
     if (!latestVersion) return
@@ -685,30 +695,11 @@ export function SkillDetailPage({
                     <button
                       className="btn btn-ghost"
                       type="button"
-                      onClick={async () => {
-                        const reason = window.prompt(
-                          'Report this skill? A reason is required. Abuse may result in a ban.',
-                        )
-                        if (reason === null) return
-                        const trimmedReason = reason.trim()
-                        if (!trimmedReason) {
-                          window.alert('Report reason required.')
-                          return
-                        }
-                        try {
-                          const result = await reportSkill({
-                            skillId: skill._id,
-                            reason: trimmedReason,
-                          })
-                          if (result.reported) {
-                            window.alert('Thanks — your report has been submitted.')
-                          } else {
-                            window.alert('You have already reported this skill.')
-                          }
-                        } catch (error) {
-                          console.error('Failed to report skill', error)
-                          window.alert(formatReportError(error))
-                        }
+                      onClick={() => {
+                        setReportReason('')
+                        setReportError(null)
+                        setIsSubmittingReport(false)
+                        setIsReportDialogOpen(true)
                       }}
                     >
                       Report
@@ -720,11 +711,6 @@ export function SkillDetailPage({
                     </Link>
                   ) : null}
                 </div>
-                {isAuthenticated ? (
-                  <div className="section-subtitle" style={{ margin: '6px 0 0' }}>
-                    Reports require a reason. Abuse may result in a ban.
-                  </div>
-                ) : null}
                 <SecurityScanResults
                   sha256hash={latestVersion?.sha256hash}
                   vtAnalysis={latestVersion?.vtAnalysis}
@@ -1123,6 +1109,83 @@ export function SkillDetailPage({
           </div>
         </div>
       </div>
+      {isAuthenticated && isReportDialogOpen ? (
+        <div className="report-dialog-backdrop">
+          <div
+            className="report-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="report-title"
+          >
+            <h2
+              id="report-title"
+              className="section-title"
+              style={{ margin: 0, fontSize: '1.1rem' }}
+            >
+              Report skill
+            </h2>
+            <p className="section-subtitle" style={{ margin: 0 }}>
+              Describe the issue so moderators can review it quickly.
+            </p>
+            <form
+              className="report-dialog-form"
+              onSubmit={async (event) => {
+                event.preventDefault()
+                const trimmedReason = reportReason.trim()
+                if (!trimmedReason) {
+                  setReportError('Report reason required.')
+                  return
+                }
+
+                setIsSubmittingReport(true)
+                setReportError(null)
+                try {
+                  const result = await reportSkill({
+                    skillId: skill._id,
+                    reason: trimmedReason,
+                  })
+                  closeReportDialog()
+                  if (result.reported) {
+                    window.alert('Thanks — your report has been submitted.')
+                  } else {
+                    window.alert('You have already reported this skill.')
+                  }
+                } catch (error) {
+                  console.error('Failed to report skill', error)
+                  setReportError(formatReportError(error))
+                  setIsSubmittingReport(false)
+                }
+              }}
+            >
+              <textarea
+                className="report-dialog-textarea"
+                aria-label="Report reason"
+                placeholder="What should moderators know?"
+                value={reportReason}
+                onChange={(event) => setReportReason(event.target.value)}
+                rows={5}
+                disabled={isSubmittingReport}
+              />
+              {reportError ? <p className="report-dialog-error">{reportError}</p> : null}
+              <div className="report-dialog-actions">
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={() => {
+                    if (!isSubmittingReport) closeReportDialog()
+                  }}
+                  disabled={isSubmittingReport}
+                >
+                  Cancel
+                </button>
+                <button type="submit" className="btn" disabled={isSubmittingReport}>
+                  {isSubmittingReport ? 'Submitting…' : 'Submit report'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
     </main>
   )
 }
