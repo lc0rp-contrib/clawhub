@@ -2332,20 +2332,8 @@ export const approveSkillByHashInternal = internalMutation({
       }
 
       const now = Date.now()
-      let shouldHideSuspicious = false
-      if (isSuspicious && !alreadyBlocked && !bypassSuspicious) {
-        if (owner && !owner.deletedAt && !owner.deactivatedAt) {
-          const trustSignals = await getOwnerTrustSignals(ctx, owner, now)
-          shouldHideSuspicious = trustSignals.isLowTrust
-        }
-      }
-
       const qualityLocked = skill.moderationReason === 'quality.low' && !isMalicious
-      const nextModerationStatus = qualityLocked
-        ? 'hidden'
-        : shouldHideSuspicious
-          ? 'hidden'
-          : 'active'
+      const nextModerationStatus = qualityLocked ? 'hidden' : 'active'
       const nextModerationReason = qualityLocked
         ? 'quality.low'
         : bypassSuspicious
@@ -2354,9 +2342,7 @@ export const approveSkillByHashInternal = internalMutation({
       const nextModerationNotes = qualityLocked
         ? (skill.moderationNotes ??
           'Quality gate quarantine is still active. Manual moderation review required.')
-        : shouldHideSuspicious
-          ? 'Auto-hidden: suspicious result from low-trust publisher.'
-          : undefined
+        : undefined
 
       await ctx.db.patch(skill._id, {
         moderationStatus: nextModerationStatus,
