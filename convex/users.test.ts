@@ -8,12 +8,19 @@ vi.mock('./lib/access', async () => {
 const { requireUser } = await import('./lib/access')
 const { ensureHandler } = await import('./users')
 
+function makeCtx() {
+  const patch = vi.fn()
+  const get = vi.fn()
+  return { ctx: { db: { patch, get } } as never, patch, get }
+}
+
 describe('ensureHandler', () => {
   afterEach(() => {
     vi.mocked(requireUser).mockReset()
   })
 
   it('updates handle and display name when GitHub login changes', async () => {
+    const { ctx, patch } = makeCtx()
     vi.mocked(requireUser).mockResolvedValue({
       userId: 'users:1',
       user: {
@@ -27,11 +34,7 @@ describe('ensureHandler', () => {
       },
     } as never)
 
-    const patch = vi.fn()
-    const get = vi.fn()
-    const ctx = { db: { patch, get } }
-
-    await ensureHandler(ctx as never)
+    await ensureHandler(ctx)
 
     expect(patch).toHaveBeenCalledWith('users:1', {
       handle: 'new-handle',
@@ -41,6 +44,7 @@ describe('ensureHandler', () => {
   })
 
   it('does not override a custom display name when syncing handle', async () => {
+    const { ctx, patch } = makeCtx()
     vi.mocked(requireUser).mockResolvedValue({
       userId: 'users:2',
       user: {
@@ -53,11 +57,7 @@ describe('ensureHandler', () => {
       },
     } as never)
 
-    const patch = vi.fn()
-    const get = vi.fn()
-    const ctx = { db: { patch, get } }
-
-    await ensureHandler(ctx as never)
+    await ensureHandler(ctx)
 
     expect(patch).toHaveBeenCalledWith('users:2', {
       handle: 'new-handle',
@@ -66,6 +66,7 @@ describe('ensureHandler', () => {
   })
 
   it('fills display name from existing handle when missing', async () => {
+    const { ctx, patch } = makeCtx()
     vi.mocked(requireUser).mockResolvedValue({
       userId: 'users:3',
       user: {
@@ -79,11 +80,7 @@ describe('ensureHandler', () => {
       },
     } as never)
 
-    const patch = vi.fn()
-    const get = vi.fn()
-    const ctx = { db: { patch, get } }
-
-    await ensureHandler(ctx as never)
+    await ensureHandler(ctx)
 
     expect(patch).toHaveBeenCalledWith('users:3', {
       displayName: 'steady-handle',

@@ -77,23 +77,35 @@ export const ensure = mutation({
   handler: ensureHandler,
 })
 
-export async function ensureHandler(ctx: MutationCtx) {
-  const { userId, user } = await requireUser(ctx)
+function normalizeHandle(handle: string | undefined) {
+  const normalized = handle?.trim()
+  return normalized ? normalized : undefined
+}
+
+function deriveHandle(args: { existingHandle?: string; githubLogin?: string; email?: string }) {
+  // Prefer the GitHub login; only fall back to email-derived handle when we don't already have one.
+  if (args.githubLogin) return args.githubLogin
+  if (!args.existingHandle && args.email) return args.email.split('@')[0]?.trim() || undefined
+  return undefined
+}
+
+function computeEnsureUpdates(user: Doc<'users'>) {
   const updates: Record<string, unknown> = {}
 
-  const existingHandle = user.handle?.trim() || undefined
-  const nameHandle = user.name?.trim() || undefined
-  const emailHandle = user.email?.split('@')[0]?.trim() || undefined
-  // `user.name` is the GitHub login (see convex/auth.ts profile mapping).
-  // Only fall back to deriving from email if we don't already have a handle.
-  const derivedHandle = nameHandle || (!existingHandle ? emailHandle : undefined)
+  const existingHandle = normalizeHandle(user.handle)
+  const githubLogin = normalizeHandle(user.name)
+  const derivedHandle = deriveHandle({
+    existingHandle,
+    githubLogin,
+    email: user.email,
+  })
   const baseHandle = derivedHandle ?? existingHandle
 
-  if (derivedHandle && (!existingHandle || existingHandle !== derivedHandle)) {
+  if (derivedHandle && existingHandle !== derivedHandle) {
     updates.handle = derivedHandle
   }
 
-  const displayName = user.displayName?.trim() || undefined
+  const displayName = normalizeHandle(user.displayName)
   if (!displayName && baseHandle) {
     updates.displayName = baseHandle
   } else if (derivedHandle && displayName === existingHandle) {
@@ -105,6 +117,13 @@ export async function ensureHandler(ctx: MutationCtx) {
   }
 
   if (!user.createdAt) updates.createdAt = user._creationTime
+
+  return updates
+}
+
+export async function ensureHandler(ctx: MutationCtx) {
+  const { userId, user } = await requireUser(ctx)
+  const updates = computeEnsureUpdates(user)
 
   if (Object.keys(updates).length > 0) {
     updates.updatedAt = Date.now()
