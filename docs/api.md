@@ -25,7 +25,7 @@ Per IP + per API key:
 
 Headers: `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`, `RateLimit-Limit`, `RateLimit-Remaining`, `RateLimit-Reset`, `Retry-After` (on 429).
 
-Semantics:
+Where:
 
 - `X-RateLimit-Reset`: Unix epoch seconds (absolute reset time)
 - `RateLimit-Reset`: delay seconds until reset
