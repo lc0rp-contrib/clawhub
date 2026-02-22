@@ -1,7 +1,15 @@
 import { v } from 'convex/values'
 import type { Doc } from './_generated/dataModel'
 import { mutation, query } from './_generated/server'
-import { addHandler, removeHandler } from './comments.handlers'
+import {
+  addHandler,
+  hardDeleteHandler,
+  isCommentVisible,
+  listReportedCommentsHandler,
+  removeHandler,
+  reportHandler,
+  setSoftDeletedHandler,
+} from './comments.handlers'
 import { type PublicUser, toPublicUser } from './lib/public'
 
 export const listBySkill = query({
@@ -14,7 +22,7 @@ export const listBySkill = query({
       .order('desc')
       .take(limit)
 
-    const visible = comments.filter((comment) => !comment.softDeletedAt)
+    const visible = comments.filter((comment) => isCommentVisible(comment))
     return Promise.all(
       visible.map(
         async (comment): Promise<{ comment: Doc<'comments'>; user: PublicUser | null }> => ({
@@ -34,4 +42,24 @@ export const add = mutation({
 export const remove = mutation({
   args: { commentId: v.id('comments') },
   handler: removeHandler,
+})
+
+export const report = mutation({
+  args: { commentId: v.id('comments'), reason: v.string() },
+  handler: reportHandler,
+})
+
+export const listReportedComments = query({
+  args: { limit: v.optional(v.number()) },
+  handler: listReportedCommentsHandler,
+})
+
+export const setSoftDeleted = mutation({
+  args: { commentId: v.id('comments'), deleted: v.boolean() },
+  handler: setSoftDeletedHandler,
+})
+
+export const hardDelete = mutation({
+  args: { commentId: v.id('comments') },
+  handler: hardDeleteHandler,
 })

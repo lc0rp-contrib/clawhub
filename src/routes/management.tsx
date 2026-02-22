@@ -29,6 +29,14 @@ type ReportedSkillEntry = ManagementSkillEntry & {
   reports: ReportReasonEntry[]
 }
 
+type ReportedCommentEntry = {
+  comment: Doc<'comments'>
+  skill: Doc<'skills'> | null
+  owner: Doc<'users'> | null
+  commenter: Doc<'users'> | null
+  reports: ReportReasonEntry[]
+}
+
 type RecentVersionEntry = {
   version: Doc<'skillVersions'>
   skill: Doc<'skills'> | null
@@ -88,6 +96,10 @@ function Management() {
   const reportedSkills = useQuery(api.skills.listReportedSkills, staff ? { limit: 25 } : 'skip') as
     | ReportedSkillEntry[]
     | undefined
+  const reportedComments = useQuery(
+    api.comments.listReportedComments,
+    staff ? { limit: 30 } : 'skip',
+  ) as ReportedCommentEntry[] | undefined
   const duplicateCandidates = useQuery(
     api.skills.listDuplicateCandidates,
     staff ? { limit: 20 } : 'skip',
@@ -98,6 +110,8 @@ function Management() {
   const setBatch = useMutation(api.skills.setBatch)
   const setSoftDeleted = useMutation(api.skills.setSoftDeleted)
   const hardDelete = useMutation(api.skills.hardDelete)
+  const setCommentSoftDeleted = useMutation(api.comments.setSoftDeleted)
+  const hardDeleteComment = useMutation(api.comments.hardDelete)
   const changeOwner = useMutation(api.skills.changeOwner)
   const setDuplicate = useMutation(api.skills.setDuplicate)
   const setOfficialBadge = useMutation(api.skills.setOfficialBadge)
@@ -107,6 +121,8 @@ function Management() {
   const [selectedOwner, setSelectedOwner] = useState('')
   const [reportSearch, setReportSearch] = useState('')
   const [reportSearchDebounced, setReportSearchDebounced] = useState('')
+  const [commentReportSearch, setCommentReportSearch] = useState('')
+  const [commentReportSearchDebounced, setCommentReportSearchDebounced] = useState('')
   const [userSearch, setUserSearch] = useState('')
   const [userSearchDebounced, setUserSearchDebounced] = useState('')
 
@@ -132,6 +148,11 @@ function Management() {
   }, [reportSearch])
 
   useEffect(() => {
+    const handle = setTimeout(() => setCommentReportSearchDebounced(commentReportSearch), 250)
+    return () => clearTimeout(handle)
+  }, [commentReportSearch])
+
+  useEffect(() => {
     const handle = setTimeout(() => setUserSearchDebounced(userSearch), 250)
     return () => clearTimeout(handle)
   }, [userSearch])
@@ -144,7 +165,7 @@ function Management() {
     )
   }
 
-  if (!recentVersions || !reportedSkills || !duplicateCandidates) {
+  if (!recentVersions || !reportedSkills || !reportedComments || !duplicateCandidates) {
     return (
       <main className="section">
         <div className="card">Loading management console…</div>
@@ -179,6 +200,37 @@ function Management() {
       ? 'No matching reports.'
       : 'No reports yet.'
   const reportSummary = `Showing ${filteredReportedSkills.length} of ${reportedSkills.length}`
+
+  const commentReportQuery = commentReportSearchDebounced.trim().toLowerCase()
+  const filteredReportedComments = commentReportQuery
+    ? reportedComments.filter((entry) => {
+        const reportReasons = (entry.reports ?? []).map((report) => report.reason).join(' ')
+        const reporterHandles = (entry.reports ?? [])
+          .map((report) => report.reporterHandle)
+          .filter(Boolean)
+          .join(' ')
+        const haystack = [
+          entry.skill?.displayName,
+          entry.skill?.slug,
+          entry.owner?.handle,
+          entry.owner?.name,
+          entry.commenter?.handle,
+          entry.commenter?.name,
+          entry.comment.body,
+          reportReasons,
+          reporterHandles,
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase()
+        return haystack.includes(commentReportQuery)
+      })
+    : reportedComments
+  const commentReportCountLabel =
+    filteredReportedComments.length === 0 && reportedComments.length > 0
+      ? 'No matching reports.'
+      : 'No reports yet.'
+  const commentReportSummary = `Showing ${filteredReportedComments.length} of ${reportedComments.length}`
 
   const filteredUsers = userResult?.items ?? []
   const userTotal = userResult?.total ?? 0
@@ -276,6 +328,105 @@ function Management() {
                         onClick={() => {
                           if (!window.confirm(`Hard delete ${skill.displayName}?`)) return
                           void hardDelete({ skillId: skill._id })
+                        }}
+                      >
+                        Hard delete
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+              )
+            })
+          )}
+        </div>
+      </div>
+
+      <div className="card" style={{ marginTop: 20 }}>
+        <h2 className="section-title" style={{ fontSize: '1.2rem', margin: 0 }}>
+          Reported comments
+        </h2>
+        <div className="management-controls">
+          <div className="management-control management-search">
+            <span className="mono">Filter</span>
+            <input
+              type="search"
+              placeholder="Search reported comments"
+              value={commentReportSearch}
+              onChange={(event) => setCommentReportSearch(event.target.value)}
+            />
+          </div>
+          <div className="management-count">{commentReportSummary}</div>
+        </div>
+        <div className="management-list">
+          {filteredReportedComments.length === 0 ? (
+            <div className="stat">{commentReportCountLabel}</div>
+          ) : (
+            filteredReportedComments.map((entry) => {
+              const { comment, skill, owner, commenter, reports } = entry
+              const ownerParam = skill
+                ? resolveOwnerParam(owner?.handle ?? null, owner?._id ?? skill.ownerUserId)
+                : 'unknown'
+              const reportEntries = reports ?? []
+              return (
+                <div key={comment._id} className="management-item">
+                  <div className="management-item-main">
+                    {skill ? (
+                      <Link to="/$owner/$slug" params={{ owner: ownerParam, slug: skill.slug }}>
+                        {skill.displayName}
+                      </Link>
+                    ) : (
+                      <strong>Unknown skill</strong>
+                    )}
+                    <div className="section-subtitle" style={{ margin: 0 }}>
+                      @{commenter?.handle ?? commenter?.name ?? 'user'} ·{' '}
+                      {comment.reportCount ?? 0} report{(comment.reportCount ?? 0) === 1 ? '' : 's'}
+                      {comment.lastReportedAt
+                        ? ` · last ${formatTimestamp(comment.lastReportedAt)}`
+                        : ''}
+                      {comment.softDeletedAt ? ' · hidden' : ' · visible'}
+                    </div>
+                    <div className="comment-body-text">{comment.body}</div>
+                    {reportEntries.length > 0 ? (
+                      <div className="management-sublist">
+                        {reportEntries.map((report) => (
+                          <div
+                            key={`${comment._id}-${report.reporterId}-${report.createdAt}`}
+                            className="management-report-item"
+                          >
+                            <span className="management-report-meta">
+                              {formatTimestamp(report.createdAt)}
+                              {report.reporterHandle ? ` · @${report.reporterHandle}` : ''}
+                            </span>
+                            <span>{report.reason}</span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="section-subtitle" style={{ margin: 0 }}>
+                        No report reasons yet.
+                      </div>
+                    )}
+                  </div>
+                  <div className="management-actions">
+                    <button
+                      className="btn"
+                      type="button"
+                      onClick={() =>
+                        void setCommentSoftDeleted({
+                          commentId: comment._id,
+                          deleted: !comment.softDeletedAt,
+                        })
+                      }
+                    >
+                      {comment.softDeletedAt ? 'Restore' : 'Hide'}
+                    </button>
+                    {admin ? (
+                      <button
+                        className="btn"
+                        type="button"
+                        onClick={() => {
+                          if (!window.confirm('Hard delete this comment?')) return
+                          void hardDeleteComment({ commentId: comment._id })
                         }}
                       >
                         Hard delete

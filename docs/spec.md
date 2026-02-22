@@ -16,7 +16,7 @@ read_when:
 - Vector-based search over skill text + metadata.
 - Versioning, tags (`latest` + user tags), changelog, rollback (tag movement).
 - Public read access; upload requires auth.
-- Moderation: badges + comment delete; audit everything.
+- Moderation: badges + report-driven hide/review for skills and comments; audit everything.
 
 ## Non-goals (v1)
 - Paid features, private skills, or binary assets.
@@ -108,7 +108,17 @@ From SKILL.md frontmatter + AgentSkills + Clawdis extensions:
 ### Comment
 - `skillId`, `userId`, `body`
 - `softDeletedAt`, `deletedBy`
+- `moderationStatus`: `active | hidden | removed`
+- `moderationReason`, `moderationNotes`
+- `reportCount`, `lastReportedAt`
+- `hiddenAt`, `lastReviewedAt`
 - `createdAt`
+
+### CommentReport
+- `commentId`, `skillId`, `userId`, `reason`, `createdAt`
+- uniqueness: one report per user + comment
+- cap: 20 active reports per reporter
+- auto-hide threshold: >3 unique reports (4th report)
 
 ### Star
 - `skillId`, `userId`, `createdAt`
@@ -126,6 +136,7 @@ From SKILL.md frontmatter + AgentSkills + Clawdis extensions:
 - Management console: moderators can hide/restore skills + mark duplicates + ban users; admins can change owners, approve badges, hard-delete skills, and ban users (deletes owned skills).
 - Role changes are admin-only and audited.
 - Reporting: any user can report skills; per-user cap 20 active reports; skills auto-hide after >3 unique reports (mods can review/unhide/delete/ban).
+- Comment reporting: users can report comments with the same cap/threshold model; staff review in management.
 
 ## Upload flow (50MB per version)
 1) Client requests upload session.

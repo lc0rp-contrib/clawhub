@@ -4,14 +4,15 @@ read_when:
   - Working on moderation or abuse controls
   - Reviewing upload restrictions
   - Troubleshooting hidden/removed skills
+  - Working on comment abuse controls
 ---
 
 # Security + Moderation
 
 ## Roles + permissions
 
-- user: upload skills/souls (subject to GitHub age gate), report skills.
-- moderator: hide/restore skills, view hidden skills, unhide, soft-delete, ban users (except admins).
+- user: upload skills/souls (subject to GitHub age gate), report skills, and report comments.
+- moderator: hide/restore skills, view hidden skills, unhide, soft-delete comments, ban users (except admins).
 - admin: all moderator actions + hard delete skills, change owners, change roles.
 
 ## Reporting + auto-hide
@@ -31,6 +32,19 @@ read_when:
   staff-only queries and unhide/restore/delete/ban.
 - Skills directory supports an optional "Hide suspicious" filter to exclude
   active-but-flagged (`flagged.suspicious`) entries from browse/search results.
+
+## Comment moderation
+
+- Comment authors and moderators can soft-delete comments.
+- Reports are unique per user + comment.
+- Report reason required (trimmed, max 500 chars).
+- Per-user cap: 20 **active** comment reports.
+- Auto-hide: when unique reports exceed 3 (4th report), the comment is:
+  - soft-deleted (`softDeletedAt`)
+  - `moderationStatus = hidden`
+  - `moderationReason = auto.reports`
+  - audit log entry: `comment.auto_hide`
+- Reported comments are surfaced to moderators/admins in management for restore/delete decisions.
 
 ## Bans
 

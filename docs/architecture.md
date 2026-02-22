@@ -59,3 +59,8 @@ read_when:
 - Compute fingerprint; compare to registry state.
 - Optionally reports telemetry (see `docs/telemetry.md`).
 - Publishes new/changed skills (skips modified installed skills inside install root).
+
+## Moderation pipeline
+
+- Skills: user reports -> report counter -> auto-hide on 4th unique report -> staff review in management -> restore/delete/ban actions with audit logs.
+- Comments: owner/moderator soft-delete path + user report counter + auto-hide on 4th unique report + staff review in management + restore/hard-delete actions with audit logs.

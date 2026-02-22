@@ -2,6 +2,10 @@ import { expect, test } from '@playwright/test'
 
 test('skills search paginates exact results', async ({ page }) => {
   await page.addInitScript(() => {
+    // Force button-based pagination so this test is deterministic across runners.
+    ;(window as typeof window & { IntersectionObserver?: typeof IntersectionObserver })
+      .IntersectionObserver = undefined
+
     const makeSearchResults = (count: number) =>
       Array.from({ length: count }, (_, index) => ({
         score: 0.9,
@@ -86,12 +90,12 @@ test('skills search paginates exact results', async ({ page }) => {
   const input = page.getByPlaceholder('Filter by name, slug, or summary…')
   await input.fill('remind')
   await expect(page.getByText('Skill 0')).toBeVisible()
-  await expect(page.getByText('Scroll to load more')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Load more' })).toBeVisible()
 
-  await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight))
-  await expect(page.getByText('Skill 75')).toBeVisible()
+  await page.getByRole('button', { name: 'Load more' }).click()
+  await expect(page.getByText('Skill 49')).toBeVisible()
   const limits = await page.evaluate(
     () => (window as typeof window & { __searchLimits: number[] }).__searchLimits,
   )
-  expect(limits).toEqual([50, 100])
+  expect(limits).toEqual([25, 50])
 })

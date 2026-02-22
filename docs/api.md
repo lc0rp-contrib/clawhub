@@ -46,6 +46,12 @@ Auth required:
 - `POST /api/v1/skills/{slug}/undelete`
 - `GET /api/v1/whoami`
 
+## Moderation note
+
+- Skill reporting + auto-hide is implemented in backend mutations used by the web app.
+- Comment reporting + auto-hide is implemented in Convex backend mutations used by the web app.
+- Public REST (`/api/v1/*`) does not currently expose comment reporting endpoints.
+
 ## Legacy
 
 Legacy `/api/*` and `/api/cli/*` still available. See `DEPRECATIONS.md`.

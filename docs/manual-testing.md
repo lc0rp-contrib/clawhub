@@ -62,3 +62,19 @@ Run against a local preview server:
 ```
 bun run test:e2e:local
 ```
+
+## Moderation smoke (web)
+
+- Current comment delete path:
+  - Post a comment as user A.
+  - Verify user A can delete own comment.
+  - Verify user B (non-mod) cannot delete user A comment.
+  - Verify moderator can delete user A comment.
+- Comment report path:
+  - Submit report with empty reason -> expect validation error.
+  - Submit first unique report -> comment still visible.
+  - Submit duplicate report by same user -> no-op.
+  - Submit 4th unique report -> comment auto-hidden.
+  - Verify comment appears in management reported-comments queue.
+  - Verify moderator restore returns comment to public list.
+  - Verify admin hard delete removes comment permanently.
