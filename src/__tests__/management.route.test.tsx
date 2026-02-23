@@ -149,7 +149,9 @@ describe('Management route', () => {
     const Component = (Route as unknown as { component: () => JSX.Element }).component
     render(<Component />)
 
-    expect(screen.getByText('Reported comments')).toBeTruthy()
+    fireEvent.click(screen.getByRole('tab', { name: 'Reported comments' }))
+
+    expect(screen.getByRole('heading', { name: 'Reported comments' })).toBeTruthy()
     expect(screen.getByText('Blogwatcher')).toBeTruthy()
     expect(screen.getByText('base64 | bash')).toBeTruthy()
     expect(screen.getByText('suspicious download-and-execute command')).toBeTruthy()
@@ -158,6 +160,8 @@ describe('Management route', () => {
   it('calls comment moderation mutations from reported comments actions', () => {
     const Component = (Route as unknown as { component: () => JSX.Element }).component
     render(<Component />)
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Reported comments' }))
 
     fireEvent.click(screen.getByRole('button', { name: 'Hide' }))
     expect(setSoftDeletedCommentMock).toHaveBeenCalledWith({

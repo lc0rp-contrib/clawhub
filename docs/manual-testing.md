@@ -75,6 +75,6 @@ bun run test:e2e:local
   - Submit first unique report -> comment still visible.
   - Submit duplicate report by same user -> no-op.
   - Submit 4th unique report -> comment auto-hidden.
-  - Verify comment appears in management reported-comments queue.
+  - Verify comment appears in management `Reported comments` tab queue.
   - Verify moderator restore returns comment to public list.
   - Verify admin hard delete removes comment permanently.

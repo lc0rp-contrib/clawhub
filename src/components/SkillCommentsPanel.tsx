@@ -1,4 +1,5 @@
 import { useMutation, useQuery } from 'convex/react'
+import { Flag } from 'lucide-react'
 import { useState } from 'react'
 import { api } from '../../convex/_generated/api'
 import type { Doc, Id } from '../../convex/_generated/dataModel'
@@ -135,14 +136,20 @@ export function SkillCommentsPanel({ skillId, isAuthenticated, me }: SkillCommen
                 </div>
                 {isAuthenticated ? (
                   <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-                    <button
-                      className="btn btn-ghost"
-                      type="button"
-                      onClick={() => openReportDialog(entry.comment._id)}
-                      disabled={Boolean(deletingCommentId) || isSubmittingReport}
-                    >
-                      Report
-                    </button>
+                    <div className="comment-report-control">
+                      <button
+                        className="star-toggle comment-flag-toggle"
+                        type="button"
+                        aria-label="Report"
+                        onClick={() => openReportDialog(entry.comment._id)}
+                        disabled={Boolean(deletingCommentId) || isSubmittingReport}
+                      >
+                        <Flag size={14} />
+                      </button>
+                      <span className="comment-report-popover" aria-hidden="true">
+                        Report
+                      </span>
+                    </div>
                     {me && (me._id === entry.comment.userId || isModerator(me)) ? (
                       <button
                         className="btn comment-delete"

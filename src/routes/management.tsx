@@ -61,6 +61,14 @@ type SkillBySlugResult = {
   } | null
 } | null
 
+type ManagementTab =
+  | 'reportedSkills'
+  | 'reportedComments'
+  | 'skillTools'
+  | 'duplicateCandidates'
+  | 'recentPushes'
+  | 'users'
+
 function resolveOwnerParam(handle: string | null | undefined, ownerId?: Id<'users'>) {
   return handle?.trim() || (ownerId ? String(ownerId) : 'unknown')
 }
@@ -125,6 +133,9 @@ function Management() {
   const [commentReportSearchDebounced, setCommentReportSearchDebounced] = useState('')
   const [userSearch, setUserSearch] = useState('')
   const [userSearchDebounced, setUserSearchDebounced] = useState('')
+  const [activeTab, setActiveTab] = useState<ManagementTab>(
+    selectedSlug ? 'skillTools' : 'reportedSkills',
+  )
 
   const userQuery = userSearchDebounced.trim()
   const userResult = useQuery(
@@ -156,6 +167,17 @@ function Management() {
     const handle = setTimeout(() => setUserSearchDebounced(userSearch), 250)
     return () => clearTimeout(handle)
   }, [userSearch])
+
+  useEffect(() => {
+    if (!selectedSlug) return
+    setActiveTab('skillTools')
+  }, [selectedSlug])
+
+  useEffect(() => {
+    if (!admin && activeTab === 'users') {
+      setActiveTab('reportedSkills')
+    }
+  }, [activeTab, admin])
 
   if (!staff) {
     return (
@@ -245,12 +267,39 @@ function Management() {
       : ''
     : 'Loading users…'
 
+  const tabs: Array<{ key: ManagementTab; label: string }> = [
+    { key: 'reportedSkills', label: 'Reported skills' },
+    { key: 'reportedComments', label: 'Reported comments' },
+    { key: 'skillTools', label: 'Skill tools' },
+    { key: 'duplicateCandidates', label: 'Duplicate candidates' },
+    { key: 'recentPushes', label: 'Recent pushes' },
+    ...(admin ? [{ key: 'users' as const, label: 'Users' }] : []),
+  ]
+
   return (
     <main className="section">
       <h1 className="section-title">Management console</h1>
       <p className="section-subtitle">Moderation, curation, and ownership tools.</p>
+      <div className="management-tabs" role="tablist" aria-label="Management sections">
+        {tabs.map((tab) => {
+          const isActive = activeTab === tab.key
+          return (
+            <button
+              key={tab.key}
+              type="button"
+              role="tab"
+              aria-selected={isActive}
+              className={`btn management-tab${isActive ? ' is-active' : ''}`}
+              onClick={() => setActiveTab(tab.key)}
+            >
+              {tab.label}
+            </button>
+          )
+        })}
+      </div>
 
-      <div className="card">
+      {activeTab === 'reportedSkills' ? (
+        <div className="card">
         <h2 className="section-title" style={{ fontSize: '1.2rem', margin: 0 }}>
           Reported skills
         </h2>
@@ -340,8 +389,10 @@ function Management() {
           )}
         </div>
       </div>
+      ) : null}
 
-      <div className="card" style={{ marginTop: 20 }}>
+      {activeTab === 'reportedComments' ? (
+        <div className="card">
         <h2 className="section-title" style={{ fontSize: '1.2rem', margin: 0 }}>
           Reported comments
         </h2>
@@ -439,8 +490,10 @@ function Management() {
           )}
         </div>
       </div>
+      ) : null}
 
-      <div className="card" style={{ marginTop: 20 }}>
+      {activeTab === 'skillTools' ? (
+        <div className="card">
         <h2 className="section-title" style={{ fontSize: '1.2rem', margin: 0 }}>
           Skill tools
         </h2>
@@ -643,8 +696,10 @@ function Management() {
           )}
         </div>
       </div>
+      ) : null}
 
-      <div className="card" style={{ marginTop: 20 }}>
+      {activeTab === 'duplicateCandidates' ? (
+        <div className="card">
         <h2 className="section-title" style={{ fontSize: '1.2rem', margin: 0 }}>
           Duplicate candidates
         </h2>
@@ -733,8 +788,10 @@ function Management() {
           )}
         </div>
       </div>
+      ) : null}
 
-      <div className="card" style={{ marginTop: 20 }}>
+      {activeTab === 'recentPushes' ? (
+        <div className="card">
         <h2 className="section-title" style={{ fontSize: '1.2rem', margin: 0 }}>
           Recent pushes
         </h2>
@@ -772,9 +829,10 @@ function Management() {
           )}
         </div>
       </div>
+      ) : null}
 
-      {admin ? (
-        <div className="card" style={{ marginTop: 20 }}>
+      {admin && activeTab === 'users' ? (
+        <div className="card">
           <h2 className="section-title" style={{ fontSize: '1.2rem', margin: 0 }}>
             Users
           </h2>

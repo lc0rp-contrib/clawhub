@@ -2454,6 +2454,55 @@ code {
   outline-offset: 2px;
 }
 
+.comment-flag-toggle {
+  width: 32px;
+  height: 32px;
+}
+
+.comment-flag-toggle svg {
+  width: 14px;
+  height: 14px;
+}
+
+.comment-report-control {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.comment-report-popover {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 8px);
+  transform: translateX(-50%);
+  padding: 4px 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 107, 74, 0.25);
+  background: var(--surface);
+  color: var(--ink-soft);
+  font-size: 0.75rem;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity 0.12s ease,
+    transform 0.12s ease;
+}
+
+.comment-report-control:hover .comment-report-popover,
+.comment-report-control:focus-within .comment-report-popover {
+  opacity: 1;
+  visibility: visible;
+  transform: translate(-50%, -2px);
+}
+
+[data-theme="dark"] .comment-report-popover {
+  border-color: rgba(232, 106, 71, 0.35);
+  background: rgba(30, 21, 17, 0.96);
+  color: #ffd0bf;
+}
+
 .sidebar-card {
   gap: 20px;
 }
@@ -3319,6 +3368,31 @@ html.theme-transition::view-transition-new(theme) {
   display: grid;
   gap: 16px;
   margin-top: 12px;
+}
+
+.management-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 14px 0 16px;
+}
+
+.management-tab {
+  background: var(--surface);
+  border-color: var(--line);
+  color: var(--ink-soft);
+  box-shadow: none;
+}
+
+.management-tab:hover {
+  border-color: rgba(255, 107, 74, 0.4);
+  color: var(--ink);
+}
+
+.management-tab.is-active {
+  background: rgba(255, 107, 74, 0.12);
+  border-color: rgba(255, 107, 74, 0.45);
+  color: var(--accent-deep);
 }
 
 .management-item {
